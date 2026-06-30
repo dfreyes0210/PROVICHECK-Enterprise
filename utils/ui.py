@@ -55,3 +55,41 @@ def tarjeta_equipo(equipo: dict):
         <p>⚠️ Criticidad: {criticidad}</p><p><span class="{tag_class}">{estado}</span></p>
     </div>
     """, unsafe_allow_html=True)
+def estado_class(estado: str):
+    txt = str(estado).lower()
+
+    if "fuera" in txt or "inactivo" in txt or "baja" in txt:
+        return "tag-danger"
+
+    if "mant" in txt or "calibr" in txt or "observ" in txt:
+        return "tag-warn"
+
+    return "tag-ok"
+
+
+def tarjeta_equipo_html(equipo: dict):
+    codigo = equipo.get("codigo_equipo", "Sin código")
+    nombre = equipo.get("nombre_equipo", "Equipo sin nombre")
+    laboratorio = equipo.get("laboratorio", "Sin laboratorio")
+    ubicacion = equipo.get("ubicacion", "Sin ubicación")
+    estado = equipo.get("estado", "Sin estado")
+    responsable = equipo.get("responsable", "Sin responsable")
+    criticidad = equipo.get("criticidad", "Sin criticidad")
+    marca = equipo.get("marca", "Sin marca")
+    modelo = equipo.get("modelo", "Sin modelo")
+    tipo = equipo.get("tipo_equipo", "Sin tipo")
+
+    return f"""
+    <div class="equipment-card">
+        <div style="font-size:2.2rem;">⚖️</div>
+        <div class="equipment-code">{codigo}</div>
+        <div class="equipment-name">{nombre}</div>
+        <div class="equipment-line">🏭 <strong>Laboratorio:</strong> {laboratorio}</div>
+        <div class="equipment-line">📍 <strong>Ubicación:</strong> {ubicacion}</div>
+        <div class="equipment-line">🏷️ <strong>Tipo:</strong> {tipo}</div>
+        <div class="equipment-line">🔧 <strong>Marca/Modelo:</strong> {marca} · {modelo}</div>
+        <div class="equipment-line">👤 <strong>Responsable:</strong> {responsable}</div>
+        <div class="equipment-line">⚠️ <strong>Criticidad:</strong> {criticidad}</div>
+        <p><span class="{estado_class(estado)}">{estado}</span></p>
+    </div>
+    """
