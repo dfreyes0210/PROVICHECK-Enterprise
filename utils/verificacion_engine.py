@@ -1,3 +1,19 @@
+def limpiar_numero(valor):
+    """
+    Convierte cualquier valor numérico a float.
+    Si está vacío o no es válido, devuelve None.
+    """
+    try:
+        if valor is None:
+            return None
+
+        if str(valor).strip() == "":
+            return None
+
+        return float(valor)
+
+    except:
+        return None
 def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limite_superior):
     resultado = limpiar_numero(resultado_observado)
     nominal = limpiar_numero(valor_nominal)
