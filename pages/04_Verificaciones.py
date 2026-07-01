@@ -5,20 +5,23 @@ from utils.data import cargar_hoja
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
-    evaluar_resultado
+    evaluar_resultado,
 )
 
 st.set_page_config(
     page_title="Verificaciones - PROVICHECK",
     page_icon="✅",
-    layout="wide"
+    layout="wide",
 )
 
 aplicar_estilo()
 encabezado()
 
 st.title("✅ Motor Inteligente de Verificación")
-st.caption("El analista ingresa solo el resultado observado. PROVICHECK evalúa automáticamente el cumplimiento.")
+st.caption(
+    "El analista ingresa solo el resultado observado. "
+    "PROVICHECK evalúa automáticamente el cumplimiento."
+)
 
 equipos = cargar_hoja("Equipos")
 puntos = cargar_hoja("Puntos_Verificacion")
@@ -39,12 +42,14 @@ equipos["descripcion"] = (
 
 equipo_sel = st.selectbox(
     "Seleccione equipo",
-    equipos["descripcion"].tolist()
+    equipos["descripcion"].tolist(),
 )
 
 codigo_equipo = equipo_sel.split(" · ")[0]
 
-equipo_info = equipos[equipos["codigo_equipo"].astype(str) == str(codigo_equipo)].iloc[0].to_dict()
+equipo_info = equipos[
+    equipos["codigo_equipo"].astype(str) == str(codigo_equipo)
+].iloc[0].to_dict()
 
 st.divider()
 
@@ -66,8 +71,10 @@ st.subheader("Puntos de verificación")
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     punto = preparar_punto_para_verificacion(fila.to_dict())
 
-    with st.expander(f"📌 {punto['punto_verificacion']} · {punto['nombre_chequeo']}", expanded=i == 0):
-
+    with st.expander(
+        f"📌 {punto['punto_verificacion']} · {punto['nombre_chequeo']}",
+        expanded=i == 0,
+    ):
         col1, col2, col3, col4 = st.columns(4)
 
         col1.metric("Valor nominal", punto["valor_nominal"])
@@ -78,21 +85,36 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
         resultado = st.number_input(
             f"Resultado observado - {punto['punto_verificacion']}",
             key=f"resultado_{punto['id_punto']}",
-            format="%.6f"
+            format="%.6f",
         )
 
         evaluacion = evaluar_resultado(
             resultado,
             punto["valor_nominal"],
             punto["limite_inferior"],
-            punto["limite_superior"]
+            punto["limite_superior"],
         )
 
-        st.write(f"**Resultado observado:** {evaluacion['resultado']} {punto['unidad']}")
-        st.write(f"**Valor nominal:** {evaluacion['valor_nominal']} {punto['unidad']}")
-        st.write(f"**Error:** {evaluacion['error']} {punto['unidad']}")
-        st.write(f"**Límite inferior real:** {evaluacion['limite_inferior_real']} {punto['unidad']}")
-        st.write(f"**Límite superior real:** {evaluacion['limite_superior_real']} {punto['unidad']}")
+        st.write(
+            f"**Resultado observado:** "
+            f"{evaluacion['resultado']} {punto['unidad']}"
+        )
+        st.write(
+            f"**Valor nominal:** "
+            f"{evaluacion['valor_nominal']} {punto['unidad']}"
+        )
+        st.write(
+            f"**Error:** "
+            f"{evaluacion['error']} {punto['unidad']}"
+        )
+        st.write(
+            f"**Límite inferior real:** "
+            f"{evaluacion['limite_inferior_real']} {punto['unidad']}"
+        )
+        st.write(
+            f"**Límite superior real:** "
+            f"{evaluacion['limite_superior_real']} {punto['unidad']}"
+        )
         st.write(f"**Evaluación:** {evaluacion['mensaje']}")
 
         if evaluacion["cumple"] is True:
@@ -103,4 +125,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
             st.warning("🟡 SIN EVALUACIÓN")
 
 st.divider()
-st.info("En la siguiente etapa agregaremos el botón Guardar Verificación para registrar los resultados en la base de datos.")
+st.info(
+    "En la siguiente etapa agregaremos el botón Guardar Verificación "
+    "para registrar los resultados en la base de datos."
+)
