@@ -71,9 +71,9 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
         col1, col2, col3, col4 = st.columns(4)
 
         col1.metric("Valor nominal", punto["valor_nominal"])
-	col2.metric("Tolerancia inferior", punto["limite_inferior"])
-	col3.metric("Tolerancia superior", punto["limite_superior"])
-	col4.metric("Unidad", punto["unidad"])
+        col2.metric("Tolerancia inferior", punto["limite_inferior"])
+        col3.metric("Tolerancia superior", punto["limite_superior"])
+        col4.metric("Unidad", punto["unidad"])
 
         resultado = st.number_input(
             f"Resultado observado - {punto['punto_verificacion']}",
@@ -89,11 +89,11 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
         )
 
         st.write(f"**Resultado observado:** {evaluacion['resultado']} {punto['unidad']}")
-	st.write(f"**Valor nominal:** {evaluacion['valor_nominal']} {punto['unidad']}")
-	st.write(f"**Error:** {evaluacion['error']} {punto['unidad']}")
-	st.write(f"**Límite inferior real:** {evaluacion['limite_inferior_real']} {punto['unidad']}")
-	st.write(f"**Límite superior real:** {evaluacion['limite_superior_real']} {punto['unidad']}")
-	st.write(f"**Evaluación:** {evaluacion['mensaje']}")
+        st.write(f"**Valor nominal:** {evaluacion['valor_nominal']} {punto['unidad']}")
+        st.write(f"**Error:** {evaluacion['error']} {punto['unidad']}")
+        st.write(f"**Límite inferior real:** {evaluacion['limite_inferior_real']} {punto['unidad']}")
+        st.write(f"**Límite superior real:** {evaluacion['limite_superior_real']} {punto['unidad']}")
+        st.write(f"**Evaluación:** {evaluacion['mensaje']}")
 
         if evaluacion["cumple"] is True:
             st.success("🟢 CUMPLE")
