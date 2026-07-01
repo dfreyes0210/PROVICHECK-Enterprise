@@ -2,6 +2,7 @@ import streamlit as st
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.data import cargar_hoja
+from utils.formatos import formatear_numero
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
@@ -22,6 +23,8 @@ st.caption(
     "El analista ingresa solo el resultado observado. "
     "PROVICHECK evalúa automáticamente el cumplimiento."
 )
+
+DECIMALES = 4
 
 equipos = cargar_hoja("Equipos")
 puntos = cargar_hoja("Puntos_Verificacion")
@@ -77,15 +80,24 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     ):
         col1, col2, col3, col4 = st.columns(4)
 
-        col1.metric("Valor nominal", punto["valor_nominal"])
-        col2.metric("Tolerancia inferior", punto["limite_inferior"])
-        col3.metric("Tolerancia superior", punto["limite_superior"])
+        col1.metric(
+            "Valor nominal",
+            formatear_numero(punto["valor_nominal"], DECIMALES),
+        )
+        col2.metric(
+            "Tolerancia inferior",
+            formatear_numero(punto["limite_inferior"], DECIMALES),
+        )
+        col3.metric(
+            "Tolerancia superior",
+            formatear_numero(punto["limite_superior"], DECIMALES),
+        )
         col4.metric("Unidad", punto["unidad"])
 
         resultado = st.number_input(
             f"Resultado observado - {punto['punto_verificacion']}",
             key=f"resultado_{punto['id_punto']}",
-            format="%.6f",
+            format=f"%.{DECIMALES}f",
         )
 
         evaluacion = evaluar_resultado(
@@ -97,23 +109,23 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
         st.write(
             f"**Resultado observado:** "
-            f"{evaluacion['resultado']} {punto['unidad']}"
+            f"{formatear_numero(evaluacion['resultado'], DECIMALES)} {punto['unidad']}"
         )
         st.write(
             f"**Valor nominal:** "
-            f"{evaluacion['valor_nominal']} {punto['unidad']}"
+            f"{formatear_numero(evaluacion['valor_nominal'], DECIMALES)} {punto['unidad']}"
         )
         st.write(
             f"**Error:** "
-            f"{evaluacion['error']} {punto['unidad']}"
+            f"{formatear_numero(evaluacion['error'], DECIMALES)} {punto['unidad']}"
         )
         st.write(
             f"**Límite inferior real:** "
-            f"{evaluacion['limite_inferior_real']} {punto['unidad']}"
+            f"{formatear_numero(evaluacion['limite_inferior_real'], DECIMALES)} {punto['unidad']}"
         )
         st.write(
             f"**Límite superior real:** "
-            f"{evaluacion['limite_superior_real']} {punto['unidad']}"
+            f"{formatear_numero(evaluacion['limite_superior_real'], DECIMALES)} {punto['unidad']}"
         )
         st.write(f"**Evaluación:** {evaluacion['mensaje']}")
 
