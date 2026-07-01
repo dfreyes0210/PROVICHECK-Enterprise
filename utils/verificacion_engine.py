@@ -1,19 +1,41 @@
 def limpiar_numero(valor):
-    """
-    Convierte cualquier valor numérico a float.
-    Si está vacío o no es válido, devuelve None.
-    """
     try:
         if valor is None:
             return None
-
         if str(valor).strip() == "":
             return None
-
         return float(valor)
-
-    except:
+    except Exception:
         return None
+
+
+def obtener_puntos_equipo(puntos_df, codigo_equipo):
+    if puntos_df.empty:
+        return puntos_df
+
+    df = puntos_df.copy()
+    df["codigo_equipo"] = df["codigo_equipo"].astype(str)
+
+    return df[df["codigo_equipo"] == str(codigo_equipo)]
+
+
+def preparar_punto_para_verificacion(punto):
+    valor_nominal = limpiar_numero(punto.get("valor_nominal_g"))
+    limite_inferior = limpiar_numero(punto.get("limite_inferior_g"))
+    limite_superior = limpiar_numero(punto.get("limite_superior_g"))
+
+    return {
+        "id_punto": punto.get("id_punto"),
+        "codigo_equipo": punto.get("codigo_equipo"),
+        "nombre_chequeo": punto.get("nombre_chequeo"),
+        "punto_verificacion": punto.get("punto_verificacion"),
+        "unidad": punto.get("unidad"),
+        "valor_nominal": valor_nominal,
+        "limite_inferior": limite_inferior,
+        "limite_superior": limite_superior,
+    }
+
+
 def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limite_superior):
     resultado = limpiar_numero(resultado_observado)
     nominal = limpiar_numero(valor_nominal)
@@ -29,12 +51,10 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
             "limite_superior_real": None,
             "cumple": False,
             "estado": "Sin resultado",
-            "mensaje": "No se ingresó un resultado válido."
+            "mensaje": "No se ingresó un resultado válido.",
         }
 
-    error = None
-    if nominal is not None:
-        error = resultado - nominal
+    error = resultado - nominal if nominal is not None else None
 
     if nominal is None or tolerancia_inferior is None or tolerancia_superior is None:
         return {
@@ -45,7 +65,7 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
             "limite_superior_real": None,
             "cumple": None,
             "estado": "Sin límites",
-            "mensaje": "El punto no tiene valor nominal o límites configurados."
+            "mensaje": "El punto no tiene valor nominal o límites configurados.",
         }
 
     limite_inferior_real = nominal + tolerancia_inferior
@@ -63,5 +83,5 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
         "tolerancia_superior": tolerancia_superior,
         "cumple": cumple,
         "estado": "Cumple" if cumple else "No cumple",
-        "mensaje": "Resultado dentro de límites reales." if cumple else "Resultado fuera de límites reales."
+        "mensaje": "Resultado dentro de límites reales." if cumple else "Resultado fuera de límites reales.",
     }
