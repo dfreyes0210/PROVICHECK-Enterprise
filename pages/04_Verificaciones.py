@@ -2,7 +2,7 @@ import streamlit as st
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.data import cargar_hoja
-from utils.formatos import formatear_numero
+from utils.cards import mostrar_card_verificacion
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
@@ -71,29 +71,13 @@ if puntos_equipo.empty:
 
 st.subheader("Puntos de verificación")
 
+tarjetas_por_fila = 2
+columnas = st.columns(tarjetas_por_fila)
+
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     punto = preparar_punto_para_verificacion(fila.to_dict())
 
-    with st.expander(
-        f"📌 {punto['punto_verificacion']} · {punto['nombre_chequeo']}",
-        expanded=i == 0,
-    ):
-        col1, col2, col3, col4 = st.columns(4)
-
-        col1.metric(
-            "Valor nominal",
-            formatear_numero(punto["valor_nominal"], DECIMALES),
-        )
-        col2.metric(
-            "Tolerancia inferior",
-            formatear_numero(punto["limite_inferior"], DECIMALES),
-        )
-        col3.metric(
-            "Tolerancia superior",
-            formatear_numero(punto["limite_superior"], DECIMALES),
-        )
-        col4.metric("Unidad", punto["unidad"])
-
+    with columnas[i % tarjetas_por_fila]:
         resultado = st.number_input(
             f"Resultado observado - {punto['punto_verificacion']}",
             key=f"resultado_{punto['id_punto']}",
@@ -107,34 +91,11 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
             punto["limite_superior"],
         )
 
-        st.write(
-            f"**Resultado observado:** "
-            f"{formatear_numero(evaluacion['resultado'], DECIMALES)} {punto['unidad']}"
+        mostrar_card_verificacion(
+            punto=punto,
+            evaluacion=evaluacion,
+            decimales=DECIMALES,
         )
-        st.write(
-            f"**Valor nominal:** "
-            f"{formatear_numero(evaluacion['valor_nominal'], DECIMALES)} {punto['unidad']}"
-        )
-        st.write(
-            f"**Error:** "
-            f"{formatear_numero(evaluacion['error'], DECIMALES)} {punto['unidad']}"
-        )
-        st.write(
-            f"**Límite inferior real:** "
-            f"{formatear_numero(evaluacion['limite_inferior_real'], DECIMALES)} {punto['unidad']}"
-        )
-        st.write(
-            f"**Límite superior real:** "
-            f"{formatear_numero(evaluacion['limite_superior_real'], DECIMALES)} {punto['unidad']}"
-        )
-        st.write(f"**Evaluación:** {evaluacion['mensaje']}")
-
-        if evaluacion["cumple"] is True:
-            st.success("🟢 CUMPLE")
-        elif evaluacion["cumple"] is False:
-            st.error("🔴 NO CUMPLE")
-        else:
-            st.warning("🟡 SIN EVALUACIÓN")
 
 st.divider()
 st.info(
