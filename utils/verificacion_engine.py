@@ -1,10 +1,21 @@
+import math
+
+
 def limpiar_numero(valor):
     try:
         if valor is None:
             return None
+
         if str(valor).strip() == "":
             return None
-        return float(valor)
+
+        numero = float(valor)
+
+        if math.isnan(numero):
+            return None
+
+        return numero
+
     except Exception:
         return None
 
@@ -49,7 +60,7 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
             "error": None,
             "limite_inferior_real": None,
             "limite_superior_real": None,
-            "cumple": False,
+            "cumple": None,
             "estado": "Sin resultado",
             "mensaje": "No se ingresó un resultado válido.",
         }
@@ -65,7 +76,7 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
             "limite_superior_real": None,
             "cumple": None,
             "estado": "Sin límites",
-            "mensaje": "El punto no tiene valor nominal o límites configurados.",
+            "mensaje": "Punto sin límites configurados.",
         }
 
     limite_inferior_real = nominal + tolerancia_inferior

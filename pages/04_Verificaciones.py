@@ -77,28 +77,42 @@ columnas = st.columns(tarjetas_por_fila)
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     punto = preparar_punto_para_verificacion(fila.to_dict())
 
+    resultado_actual = st.session_state.get(
+        f"resultado_{punto['id_punto']}",
+        None,
+    )
+
+    evaluacion = evaluar_resultado(
+        resultado_actual,
+        punto["valor_nominal"],
+        punto["limite_inferior"],
+        punto["limite_superior"],
+    )
+
     with columnas[i % tarjetas_por_fila]:
-        resultado = st.number_input(
-            f"Resultado observado - {punto['punto_verificacion']}",
-            key=f"resultado_{punto['id_punto']}",
-            format=f"%.{DECIMALES}f",
+        resultado = mostrar_card_verificacion(
+            punto=punto,
+            evaluacion=evaluacion,
+            resultado_key=f"resultado_{punto['id_punto']}",
+            decimales=DECIMALES,
         )
 
-        evaluacion = evaluar_resultado(
+        evaluacion_actualizada = evaluar_resultado(
             resultado,
             punto["valor_nominal"],
             punto["limite_inferior"],
             punto["limite_superior"],
         )
 
-        mostrar_card_verificacion(
-            punto=punto,
-            evaluacion=evaluacion,
-            decimales=DECIMALES,
-        )
+        if evaluacion_actualizada["cumple"] is True:
+            st.success("🟢 Resultado dentro de límites.")
+        elif evaluacion_actualizada["cumple"] is False:
+            st.error("🔴 Resultado fuera de límites.")
+        else:
+            st.warning("🟡 Punto sin límites configurados.")
 
 st.divider()
 st.info(
-    "En la siguiente etapa agregaremos el botón Guardar Verificación "
+    "Siguiente etapa: agregar el botón Guardar Verificación "
     "para registrar los resultados en la base de datos."
 )
