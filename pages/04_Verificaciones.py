@@ -2,7 +2,7 @@ import streamlit as st
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.data import cargar_hoja
-from utils.cards import mostrar_card_verificacion
+from utils.formatos import formatear_numero
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
@@ -43,11 +43,7 @@ equipos["descripcion"] = (
     + equipos["nombre_equipo"].astype(str)
 )
 
-equipo_sel = st.selectbox(
-    "Seleccione equipo",
-    equipos["descripcion"].tolist(),
-)
-
+equipo_sel = st.selectbox("Seleccione equipo", equipos["descripcion"].tolist())
 codigo_equipo = equipo_sel.split(" · ")[0]
 
 equipo_info = equipos[
@@ -76,43 +72,66 @@ columnas = st.columns(tarjetas_por_fila)
 
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     punto = preparar_punto_para_verificacion(fila.to_dict())
-
-    resultado_actual = st.session_state.get(
-        f"resultado_{punto['id_punto']}",
-        None,
-    )
-
-    evaluacion = evaluar_resultado(
-        resultado_actual,
-        punto["valor_nominal"],
-        punto["limite_inferior"],
-        punto["limite_superior"],
-    )
+    unidad = punto.get("unidad", "")
 
     with columnas[i % tarjetas_por_fila]:
-        resultado = mostrar_card_verificacion(
-            punto=punto,
-            evaluacion=evaluacion,
-            resultado_key=f"resultado_{punto['id_punto']}",
-            decimales=DECIMALES,
-        )
+        with st.container(border=True):
+            st.markdown(f"### 📌 {punto['punto_verificacion']} {unidad}")
+            st.caption(punto["nombre_chequeo"])
 
-        evaluacion_actualizada = evaluar_resultado(
-            resultado,
-            punto["valor_nominal"],
-            punto["limite_inferior"],
-            punto["limite_superior"],
-        )
+            resultado = st.number_input(
+                "Resultado observado",
+                key=f"resultado_{punto['id_punto']}",
+                format=f"%.{DECIMALES}f",
+            )
 
-        if evaluacion_actualizada["cumple"] is True:
-            st.success("🟢 Resultado dentro de límites.")
-        elif evaluacion_actualizada["cumple"] is False:
-            st.error("🔴 Resultado fuera de límites.")
-        else:
-            st.warning("🟡 Punto sin límites configurados.")
+            evaluacion = evaluar_resultado(
+                resultado,
+                punto["valor_nominal"],
+                punto["limite_inferior"],
+                punto["limite_superior"],
+            )
+
+            st.divider()
+
+            st.write(
+                f"**Valor nominal:** "
+                f"{formatear_numero(punto['valor_nominal'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Tolerancia inferior:** "
+                f"{formatear_numero(punto['limite_inferior'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Tolerancia superior:** "
+                f"{formatear_numero(punto['limite_superior'], DECIMALES)} {unidad}"
+            )
+
+            st.divider()
+
+            st.write(
+                f"**Resultado observado:** "
+                f"{formatear_numero(evaluacion['resultado'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Error:** "
+                f"{formatear_numero(evaluacion['error'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Límite inferior real:** "
+                f"{formatear_numero(evaluacion['limite_inferior_real'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Límite superior real:** "
+                f"{formatear_numero(evaluacion['limite_superior_real'], DECIMALES)} {unidad}"
+            )
+
+            if evaluacion["cumple"] is True:
+                st.success("🟢 CUMPLE")
+            elif evaluacion["cumple"] is False:
+                st.error("🔴 NO CUMPLE")
+            else:
+                st.warning("🟡 SIN EVALUACIÓN")
 
 st.divider()
-st.info(
-    "Siguiente etapa: agregar el botón Guardar Verificación "
-    "para registrar los resultados en la base de datos."
-)
+st.info("Siguiente etapa: botón 💾 Guardar Verificación.")
