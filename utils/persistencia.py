@@ -113,4 +113,3 @@ def guardar_sesion_sqlite(sesion, detalles):
 
     finally:
         conn.close()
-        # Persistencia SQLite activa
