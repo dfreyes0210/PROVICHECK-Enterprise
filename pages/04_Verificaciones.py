@@ -4,22 +4,30 @@ import streamlit as st
 from utils.ui import aplicar_estilo, encabezado
 from utils.data import cargar_hoja
 from utils.formatos import formatear_numero
-from utils.persistencia import generar_id_sesion, guardar_verificacion_excel
+from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
     evaluar_resultado,
 )
 
-st.set_page_config(page_title="Verificaciones - PROVICHECK", page_icon="✅", layout="wide")
+st.set_page_config(
+    page_title="Verificaciones - PROVICHECK",
+    page_icon="✅",
+    layout="wide",
+)
 
 aplicar_estilo()
 encabezado()
 
 st.title("✅ Motor Inteligente de Verificación")
-st.caption("Ingrese resultados observados, registre observaciones y guarde la sesión completa.")
+st.caption(
+    "Ingrese resultados observados, registre observaciones "
+    "y guarde la sesión completa en SQLite."
+)
 
 DECIMALES = 4
+
 OPCIONES_OBSERVACION = [
     "Sin novedades",
     "Patrón en calibración",
@@ -43,12 +51,22 @@ if puntos.empty:
     st.error("No se encontró la hoja Puntos_Verificacion.")
     st.stop()
 
-equipos["descripcion"] = equipos["codigo_equipo"].astype(str) + " · " + equipos["nombre_equipo"].astype(str)
+equipos["descripcion"] = (
+    equipos["codigo_equipo"].astype(str)
+    + " · "
+    + equipos["nombre_equipo"].astype(str)
+)
 
-equipo_sel = st.selectbox("Seleccione equipo", equipos["descripcion"].tolist())
+equipo_sel = st.selectbox(
+    "Seleccione equipo",
+    equipos["descripcion"].tolist(),
+)
+
 codigo_equipo = equipo_sel.split(" · ")[0]
 
-equipo_info = equipos[equipos["codigo_equipo"].astype(str) == str(codigo_equipo)].iloc[0].to_dict()
+equipo_info = equipos[
+    equipos["codigo_equipo"].astype(str) == str(codigo_equipo)
+].iloc[0].to_dict()
 
 st.divider()
 
@@ -99,7 +117,9 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     key=f"obs_txt_{punto['id_punto']}",
                 )
 
-            observacion_final = observacion_texto if observacion_tipo == "Otro" else observacion_tipo
+            observacion_final = (
+                observacion_texto if observacion_tipo == "Otro" else observacion_tipo
+            )
 
             evaluacion = evaluar_resultado(
                 resultado,
@@ -108,8 +128,14 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 punto["limite_superior"],
             )
 
-            st.write(f"**Valor nominal:** {formatear_numero(punto['valor_nominal'], DECIMALES)} {unidad}")
-            st.write(f"**Error:** {formatear_numero(evaluacion['error'], DECIMALES)} {unidad}")
+            st.write(
+                f"**Valor nominal:** "
+                f"{formatear_numero(punto['valor_nominal'], DECIMALES)} {unidad}"
+            )
+            st.write(
+                f"**Error:** "
+                f"{formatear_numero(evaluacion['error'], DECIMALES)} {unidad}"
+            )
             st.write(
                 f"**Límites reales:** "
                 f"{formatear_numero(evaluacion['limite_inferior_real'], DECIMALES)} "
@@ -129,23 +155,20 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 estado_punto = "No evaluado"
                 st.warning("🟡 SIN EVALUACIÓN")
 
-            registros.append({
-                "codigo_equipo": codigo_equipo,
-                "nombre_equipo": equipo_info.get("nombre_equipo", ""),
-                "laboratorio": equipo_info.get("laboratorio", ""),
-                "tipo_equipo": equipo_info.get("tipo_equipo", ""),
-                "nombre_chequeo": punto.get("nombre_chequeo", ""),
-                "valor_esperado_g": punto.get("valor_nominal", ""),
-                "valor_observado_g": resultado,
-                "desviacion_g": evaluacion.get("error", ""),
-                "limite_inferior_g": evaluacion.get("limite_inferior_real", ""),
-                "limite_superior_g": evaluacion.get("limite_superior_real", ""),
-                "cumple": "Sí" if estado_punto == "Cumple" else "No",
-                "responsable": equipo_info.get("responsable", ""),
-                "observaciones": observacion_final,
-                "estado_punto": estado_punto,
-                "motivo_no_evaluado": observacion_final if estado_punto == "No evaluado" else "",
-            })
+            registros.append(
+                {
+                    "codigo_equipo": codigo_equipo,
+                    "punto": punto.get("punto_verificacion", ""),
+                    "nombre_chequeo": punto.get("nombre_chequeo", ""),
+                    "valor_nominal": punto.get("valor_nominal", None),
+                    "resultado": resultado,
+                    "error": evaluacion.get("error", None),
+                    "limite_inferior": evaluacion.get("limite_inferior_real", None),
+                    "limite_superior": evaluacion.get("limite_superior_real", None),
+                    "estado_punto": estado_punto,
+                    "observacion": observacion_final,
+                }
+            )
 
 st.divider()
 
@@ -169,30 +192,30 @@ else:
 
 st.markdown(f"### Estado de la sesión: **{estado_sesion}**")
 
-if st.button("💾 Guardar Verificación", use_container_width=True):
+if st.button("💾 Guardar Verificación en SQLite", use_container_width=True):
     id_sesion = generar_id_sesion(codigo_equipo)
-    fecha = datetime.now().date().isoformat()
-    hora = datetime.now().time().strftime("%H:%M:%S")
+    fecha_hora = datetime.now()
 
-    guardados = 0
-    errores = []
+    sesion = {
+        "id_sesion": id_sesion,
+        "codigo_equipo": codigo_equipo,
+        "nombre_equipo": equipo_info.get("nombre_equipo", ""),
+        "laboratorio": equipo_info.get("laboratorio", ""),
+        "fecha": fecha_hora.date().isoformat(),
+        "hora": fecha_hora.time().strftime("%H:%M:%S"),
+        "responsable": equipo_info.get("responsable", ""),
+        "estado": estado_sesion,
+        "total_puntos": total,
+        "puntos_cumplen": cumplen,
+        "puntos_no_cumplen": no_cumplen,
+        "puntos_no_evaluados": no_evaluados,
+    }
 
-    for registro in registros:
-        registro["id_sesion"] = id_sesion
-        registro["fecha_verificacion"] = fecha
-        registro["hora_verificacion"] = hora
-        registro["estado_verificacion"] = estado_sesion
+    ok, mensaje = guardar_sesion_sqlite(sesion, registros)
 
-        ok, mensaje = guardar_verificacion_excel(registro)
-
-        if ok:
-            guardados += 1
-        else:
-            errores.append(mensaje)
-
-    if errores:
-        st.error("No se pudo guardar completamente la verificación.")
-        st.write(errores)
+    if ok:
+        st.success(f"✅ {mensaje}")
+        st.info(f"Sesión guardada: {id_sesion}")
+        st.info(f"Registros guardados: {total}")
     else:
-        st.success(f"✅ Verificación guardada correctamente. Sesión: {id_sesion}")
-        st.info(f"Registros guardados: {guardados}")
+        st.error(mensaje)
