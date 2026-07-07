@@ -1,60 +1,36 @@
 import pandas as pd
-
 from database import get_connection
 
 
 def consultar_sesiones_verificacion(limite=20):
     conn = get_connection()
-
-    query = """
-        SELECT
-            id_sesion,
-            codigo_equipo,
-            nombre_equipo,
-            laboratorio,
-            fecha,
-            hora,
-            responsable,
-            estado,
-            total_puntos,
-            puntos_cumplen,
-            puntos_no_cumplen,
-            puntos_no_evaluados
+    df = pd.read_sql_query(
+        """
+        SELECT *
         FROM sesiones_verificacion
         ORDER BY fecha DESC, hora DESC
         LIMIT ?
-    """
-
-    df = pd.read_sql_query(query, conn, params=(limite,))
+        """,
+        conn,
+        params=(limite,),
+    )
     conn.close()
-
     return df
 
 
 def consultar_detalle_sesion(id_sesion):
     conn = get_connection()
-
-    query = """
-        SELECT
-            id_sesion,
-            codigo_equipo,
-            punto,
-            nombre_chequeo,
-            valor_nominal,
-            resultado,
-            error,
-            limite_inferior,
-            limite_superior,
-            estado_punto,
-            observacion
+    df = pd.read_sql_query(
+        """
+        SELECT *
         FROM detalle_verificacion
         WHERE id_sesion = ?
         ORDER BY id
-    """
-
-    df = pd.read_sql_query(query, conn, params=(id_sesion,))
+        """,
+        conn,
+        params=(id_sesion,),
+    )
     conn.close()
-
     return df
 
 
@@ -62,37 +38,66 @@ def consultar_bitacora_equipo(codigo_equipo=None, limite=50):
     conn = get_connection()
 
     if codigo_equipo:
-        query = """
-            SELECT
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
+        df = pd.read_sql_query(
+            """
+            SELECT *
             FROM bitacora
             WHERE codigo_equipo = ?
             ORDER BY fecha DESC, hora DESC
             LIMIT ?
-        """
-        df = pd.read_sql_query(query, conn, params=(codigo_equipo, limite))
+            """,
+            conn,
+            params=(codigo_equipo, limite),
+        )
     else:
-        query = """
-            SELECT
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
+        df = pd.read_sql_query(
+            """
+            SELECT *
             FROM bitacora
             ORDER BY fecha DESC, hora DESC
             LIMIT ?
-        """
-        df = pd.read_sql_query(query, conn, params=(limite,))
+            """,
+            conn,
+            params=(limite,),
+        )
 
     conn.close()
-
     return df
+
+
+def consultar_ultima_verificacion(codigo_equipo):
+    conn = get_connection()
+    df = pd.read_sql_query(
+        """
+        SELECT *
+        FROM sesiones_verificacion
+        WHERE codigo_equipo = ?
+        ORDER BY fecha DESC, hora DESC
+        LIMIT 1
+        """,
+        conn,
+        params=(str(codigo_equipo),),
+    )
+    conn.close()
+    return df
+
+
+def consultar_historial_equipo(codigo_equipo, limite=20):
+    conn = get_connection()
+    df = pd.read_sql_query(
+        """
+        SELECT *
+        FROM sesiones_verificacion
+        WHERE codigo_equipo = ?
+        ORDER BY fecha DESC, hora DESC
+        LIMIT ?
+        """,
+        conn,
+        params=(str(codigo_equipo), limite),
+    )
+    conn.close()
+    return df
+
+
+def consultar_eventos_equipo(codigo_equipo, limite=20):
+    return consultar_bitacora_equipo(str(codigo_equipo), limite)
