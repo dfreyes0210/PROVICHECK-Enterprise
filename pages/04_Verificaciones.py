@@ -5,6 +5,7 @@ from utils.ui import aplicar_estilo, encabezado
 from utils.data import cargar_hoja
 from utils.formatos import formatear_numero
 from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
+from utils.diagnostico import generar_diagnostico_sesion
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
@@ -57,11 +58,7 @@ equipos["descripcion"] = (
     + equipos["nombre_equipo"].astype(str)
 )
 
-equipo_sel = st.selectbox(
-    "Seleccione equipo",
-    equipos["descripcion"].tolist(),
-)
-
+equipo_sel = st.selectbox("Seleccione equipo", equipos["descripcion"].tolist())
 codigo_equipo = equipo_sel.split(" · ")[0]
 
 equipo_info = equipos[
@@ -153,7 +150,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 st.error("🔴 NO CUMPLE")
             else:
                 estado_punto = "No evaluado"
-                st.warning("🟡 SIN EVALUACIÓN")
+                st.warning("🟡 SIN EVALUACIÓN / SIN LÍMITES")
 
             registros.append(
                 {
@@ -190,7 +187,19 @@ elif no_evaluados > 0:
 else:
     estado_sesion = "Conforme"
 
+diagnostico = generar_diagnostico_sesion(
+    estado_sesion,
+    total,
+    cumplen,
+    no_cumplen,
+    no_evaluados,
+)
+
 st.markdown(f"### Estado de la sesión: **{estado_sesion}**")
+
+with st.container(border=True):
+    st.markdown("### 🧠 Diagnóstico automático")
+    st.write(diagnostico)
 
 if st.button("💾 Guardar Verificación en SQLite", use_container_width=True):
     id_sesion = generar_id_sesion(codigo_equipo)
@@ -215,7 +224,23 @@ if st.button("💾 Guardar Verificación en SQLite", use_container_width=True):
 
     if ok:
         st.success(f"✅ {mensaje}")
-        st.info(f"Sesión guardada: {id_sesion}")
-        st.info(f"Registros guardados: {total}")
+
+        with st.container(border=True):
+            st.markdown("## ✅ Sesión finalizada")
+            st.write(f"**Sesión:** {id_sesion}")
+            st.write(f"**Equipo:** {codigo_equipo} · {equipo_info.get('nombre_equipo', '')}")
+            st.write(f"**Fecha:** {sesion['fecha']} {sesion['hora']}")
+            st.write(f"**Responsable:** {sesion['responsable']}")
+            st.write(f"**Estado general:** {estado_sesion}")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Puntos", total)
+            c2.metric("Cumplen", cumplen)
+            c3.metric("No cumplen", no_cumplen)
+            c4.metric("No evaluados", no_evaluados)
+
+            st.markdown("### 🧠 Diagnóstico")
+            st.write(diagnostico)
+
     else:
         st.error(mensaje)
