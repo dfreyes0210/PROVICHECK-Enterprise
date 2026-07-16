@@ -1,10 +1,18 @@
 import streamlit as st
 import plotly.express as px
 
-from config import APP_NAME, VERSION, EXCEL_PATH
+from config import APP_NAME, VERSION
 from database import crear_base_datos
-from utils.ui import aplicar_estilo, encabezado, login_limpio
-from utils.data import cargar_hoja, listar_hojas_excel
+from utils.ui import aplicar_estilo, encabezado, login_limpio, pie_pagina
+from utils.dashboard import (
+    obtener_kpis,
+    obtener_estado_verificaciones,
+    obtener_equipos_por_laboratorio,
+    obtener_ultimas_verificaciones,
+    obtener_bitacora_reciente,
+    obtener_alertas,
+)
+
 
 st.set_page_config(
     page_title=APP_NAME,
@@ -16,25 +24,30 @@ st.set_page_config(
 aplicar_estilo()
 crear_base_datos()
 
+
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 
+
 if not st.session_state["autenticado"]:
     encabezado()
-    col1, col2, col3 = st.columns([1, 1.2, 1])
-    with col2:
-        st.info("Acceso exclusivo para usuarios autorizados.")
+
+    col_izquierda, col_login, col_derecha = st.columns([1, 1.15, 1])
+
+    with col_login:
         login_limpio()
+
     st.stop()
 
+
 with st.sidebar:
-    st.title("🧪 PROVICHECK")
-    st.caption(VERSION)
-    st.write(f"Usuario: **{st.session_state.get('usuario','')}**")
+    st.title("PROVICHECK")
+    st.caption(f"Enterprise · {VERSION}")
+    st.write(f"Usuario: **{st.session_state.get('usuario', '')}**")
 
     st.divider()
 
-    st.page_link("app.py", label="🏠 Inicio")
+    st.page_link("app.py", label="🏠 Dashboard")
     st.page_link("pages/01_Equipos.py", label="🧪 Equipos")
     st.page_link("pages/02_Hoja_de_Vida.py", label="📘 Hoja de Vida")
     st.page_link("pages/03_Administracion.py", label="⚙️ Administración")
@@ -42,86 +55,182 @@ with st.sidebar:
 
     st.divider()
 
-    if st.button("Cerrar sesión", use_container_width=True):
+    if st.button("Cerrar sesión", width="stretch"):
         st.session_state["autenticado"] = False
         st.rerun()
 
+
 encabezado()
 
-equipos = cargar_hoja("Equipos")
-verificaciones = cargar_hoja("Verificaciones")
-hojas = listar_hojas_excel()
+kpis = obtener_kpis()
+estado_verificaciones = obtener_estado_verificaciones()
+equipos_laboratorio = obtener_equipos_por_laboratorio()
+ultimas_verificaciones = obtener_ultimas_verificaciones(8)
+actividad_reciente = obtener_bitacora_reciente(8)
+alertas = obtener_alertas(5)
 
-st.subheader("Dashboard ejecutivo inicial")
 
-if equipos.empty:
-    st.error("No se encontró la hoja 'Equipos' en data/PROVICHECK_Base_Datos.xlsx.")
-    st.stop()
-
-total_equipos = len(equipos)
-
-equipos_activos = (
-    equipos[
-        equipos["estado"]
-        .astype(str)
-        .str.lower()
-        .str.contains("activo|operativo|disponible", na=False)
-    ].shape[0]
-    if "estado" in equipos.columns
-    else 0
-)
-
-total_labs = equipos["laboratorio"].nunique() if "laboratorio" in equipos.columns else 0
-total_verificaciones = len(verificaciones) if not verificaciones.empty else 0
+st.subheader("Centro de control")
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Equipos registrados", total_equipos)
-c2.metric("Equipos activos/operativos", equipos_activos)
-c3.metric("Laboratorios", total_labs)
-c4.metric("Verificaciones históricas", total_verificaciones)
+
+c1.metric(
+    "Equipos registrados",
+    kpis["equipos"],
+    delta=f'{kpis["activos"]} activos',
+)
+
+c2.metric(
+    "Verificaciones",
+    kpis["verificaciones"],
+    delta=f'{kpis["conformes"]} conformes',
+)
+
+c3.metric(
+    "Conformidad",
+    f'{kpis["porcentaje_conformidad"]:.1f} %',
+)
+
+c4.metric(
+    "Alertas",
+    kpis["alertas"],
+    delta=(
+        f'{kpis["no_conformes"]} no conformes · '
+        f'{kpis["incompletas"]} incompletas'
+    ),
+    delta_color="inverse",
+)
 
 st.divider()
 
-col_a, col_b = st.columns([1.2, 1])
+col_grafico_1, col_grafico_2 = st.columns([1, 1.25])
 
-with col_a:
+with col_grafico_1:
+    st.markdown("### Estado de verificaciones")
+
+    if estado_verificaciones.empty:
+        st.info("Aún no hay verificaciones registradas.")
+    else:
+        fig_estado = px.pie(
+            estado_verificaciones,
+            names="estado",
+            values="cantidad",
+            hole=0.58,
+            color="estado",
+            color_discrete_map={
+                "Conforme": "#1F7A3E",
+                "No conforme": "#C62828",
+                "Incompleta": "#D97706",
+            },
+        )
+        fig_estado.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+        )
+        fig_estado.update_layout(
+            height=380,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=True,
+        )
+        st.plotly_chart(fig_estado, width="stretch")
+
+with col_grafico_2:
     st.markdown("### Equipos por laboratorio")
-    if "laboratorio" in equipos.columns:
-        conteo_lab = equipos["laboratorio"].fillna("Sin laboratorio").value_counts().reset_index()
-        conteo_lab.columns = ["laboratorio", "cantidad"]
 
-        fig = px.bar(
-            conteo_lab,
+    if equipos_laboratorio.empty:
+        st.info("No hay información de laboratorios.")
+    else:
+        fig_laboratorios = px.bar(
+            equipos_laboratorio,
             x="laboratorio",
             y="cantidad",
             text="cantidad",
         )
-        fig.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig, use_container_width=True)
-
-with col_b:
-    st.markdown("### Estado de equipos")
-    if "estado" in equipos.columns:
-        conteo_estado = equipos["estado"].fillna("Sin estado").value_counts().reset_index()
-        conteo_estado.columns = ["estado", "cantidad"]
-
-        fig2 = px.pie(
-            conteo_estado,
-            names="estado",
-            values="cantidad",
-            hole=0.45,
+        fig_laboratorios.update_traces(
+            marker_color="#005AA7",
+            textposition="outside",
         )
-        fig2.update_layout(height=380, margin=dict(l=10, r=10, t=30, b=10))
-        st.plotly_chart(fig2, use_container_width=True)
+        fig_laboratorios.update_layout(
+            height=380,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title="Laboratorio",
+            yaxis_title="Equipos",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_laboratorios, width="stretch")
 
 st.divider()
 
-st.markdown("### Estado de la base maestra")
-st.success(f"Excel conectado correctamente: {EXCEL_PATH.name}")
-st.write("Hojas detectadas:", hojas)
+col_verificaciones, col_alertas = st.columns([1.55, 1])
 
-st.markdown("### Estado de la base operativa")
-st.success("SQLite inicializado correctamente: data/provicheck.db")
+with col_verificaciones:
+    st.markdown("### Últimas verificaciones")
 
-st.markdown("### Vista rápida de equipos")
-st.dataframe(equipos.head(10), use_container_width=True)
+    if ultimas_verificaciones.empty:
+        st.info("Aún no existen sesiones registradas.")
+    else:
+        columnas_visibles = [
+            columna
+            for columna in [
+                "fecha",
+                "hora",
+                "codigo_equipo",
+                "nombre_equipo",
+                "laboratorio",
+                "responsable",
+                "estado",
+                "total_puntos",
+            ]
+            if columna in ultimas_verificaciones.columns
+        ]
+
+        st.dataframe(
+            ultimas_verificaciones[columnas_visibles],
+            width="stretch",
+            hide_index=True,
+        )
+
+with col_alertas:
+    st.markdown("### Alertas y atención")
+
+    if not alertas:
+        st.success("No existen alertas operativas.")
+    else:
+        for alerta in alertas:
+            texto = f'**{alerta["titulo"]}**\n\n{alerta["detalle"]}'
+
+            if alerta["nivel"] == "error":
+                st.error(texto)
+            elif alerta["nivel"] == "warning":
+                st.warning(texto)
+            else:
+                st.info(texto)
+
+st.divider()
+
+st.markdown("### Actividad reciente")
+
+if actividad_reciente.empty:
+    st.info("La bitácora todavía no tiene eventos.")
+else:
+    columnas_bitacora = [
+        columna
+        for columna in [
+            "fecha",
+            "hora",
+            "codigo_equipo",
+            "evento",
+            "detalle",
+            "usuario",
+            "origen",
+        ]
+        if columna in actividad_reciente.columns
+    ]
+
+    st.dataframe(
+        actividad_reciente[columnas_bitacora],
+        width="stretch",
+        hide_index=True,
+    )
+
+pie_pagina()
