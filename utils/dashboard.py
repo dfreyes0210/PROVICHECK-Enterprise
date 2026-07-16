@@ -86,3 +86,70 @@ def obtener_estado_equipos():
         .size()
         .reset_index(name="cantidad")
     )
+
+
+def obtener_estado_verificaciones():
+
+    sesiones = consultar_sesiones_verificacion(100000)
+
+    if sesiones.empty:
+        return pd.DataFrame()
+
+    return (
+        sesiones.groupby("estado")
+        .size()
+        .reset_index(name="cantidad")
+    )
+
+
+def obtener_alertas():
+
+    sesiones = consultar_sesiones_verificacion(100000)
+
+    alertas = []
+
+    if sesiones.empty:
+        return alertas
+
+    no_conformes = sesiones[
+        sesiones["estado"] == "No conforme"
+    ]
+
+    incompletas = sesiones[
+        sesiones["estado"] == "Incompleta"
+    ]
+
+    if len(no_conformes):
+
+        alertas.append(
+            f"{len(no_conformes)} verificaciones NO conformes."
+        )
+
+    if len(incompletas):
+
+        alertas.append(
+            f"{len(incompletas)} verificaciones incompletas."
+        )
+
+    return alertas
+
+def obtener_proximas_verificaciones():
+
+    equipos = cargar_hoja("Equipos")
+
+    if equipos.empty:
+        return pd.DataFrame()
+
+    columnas = [
+        "codigo_equipo",
+        "nombre_equipo",
+        "laboratorio",
+        "frecuencia_verificacion",
+    ]
+
+    existentes = [
+        c for c in columnas
+        if c in equipos.columns
+    ]
+
+    return equipos[existentes]
