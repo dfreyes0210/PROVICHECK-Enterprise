@@ -2,7 +2,6 @@ import pandas as pd
 
 from utils.data import cargar_hoja
 from utils.sqlite_consultas import (
-    consultar_historial_equipo,
     consultar_sesiones_verificacion,
     consultar_bitacora_equipo,
 )
@@ -10,64 +9,69 @@ from utils.sqlite_consultas import (
 
 def obtener_kpis():
     equipos = cargar_hoja("Equipos")
-
     sesiones = consultar_sesiones_verificacion(100000)
 
     total_equipos = len(equipos)
-
     equipos_activos = 0
 
-    if "estado" in equipos.columns:
-        equipos_activos = equipos[
-            equipos["estado"]
-            .astype(str)
-            .str.lower()
-            .str.contains("activo|operativo|disponible")
-        ].shape[0]
+    if not equipos.empty and "estado" in equipos.columns:
+        estados = equipos["estado"].astype(str).str.lower()
+        equipos_activos = estados.str.contains(
+            "activo|operativo|disponible",
+            na=False,
+        ).sum()
 
-    verificaciones = len(sesiones)
-
+    total_verificaciones = len(sesiones)
     conformes = 0
     no_conformes = 0
     incompletas = 0
 
-    if not sesiones.empty:
+    if not sesiones.empty and "estado" in sesiones.columns:
+        estados_sesion = sesiones["estado"].astype(str).str.strip().str.lower()
+        conformes = (estados_sesion == "conforme").sum()
+        no_conformes = (estados_sesion == "no conforme").sum()
+        incompletas = (estados_sesion == "incompleta").sum()
 
-        conformes = (sesiones["estado"] == "Conforme").sum()
+    sesiones_cerradas = conformes + no_conformes
+    porcentaje_conformidad = (
+        round((conformes / sesiones_cerradas) * 100, 1)
+        if sesiones_cerradas > 0
+        else 0.0
+    )
 
-        no_conformes = (sesiones["estado"] == "No conforme").sum()
-
-        incompletas = (sesiones["estado"] == "Incompleta").sum()
+    alertas = no_conformes + incompletas
 
     return {
-        "equipos": total_equipos,
-        "activos": equipos_activos,
-        "verificaciones": verificaciones,
-        "conformes": conformes,
-        "no_conformes": no_conformes,
-        "incompletas": incompletas,
+        "equipos": int(total_equipos),
+        "activos": int(equipos_activos),
+        "verificaciones": int(total_verificaciones),
+        "conformes": int(conformes),
+        "no_conformes": int(no_conformes),
+        "incompletas": int(incompletas),
+        "alertas": int(alertas),
+        "porcentaje_conformidad": porcentaje_conformidad,
     }
 
 
 def obtener_ultimas_verificaciones(limite=10):
-
     return consultar_sesiones_verificacion(limite)
 
 
 def obtener_bitacora_reciente(limite=10):
-
     return consultar_bitacora_equipo(None, limite)
 
 
 def obtener_equipos_por_laboratorio():
-
     equipos = cargar_hoja("Equipos")
 
-    if equipos.empty:
-        return pd.DataFrame()
+    if equipos.empty or "laboratorio" not in equipos.columns:
+        return pd.DataFrame(columns=["laboratorio", "cantidad"])
 
     return (
-        equipos.groupby("laboratorio")
+        equipos.assign(
+            laboratorio=equipos["laboratorio"].fillna("Sin laboratorio")
+        )
+        .groupby("laboratorio")
         .size()
         .reset_index(name="cantidad")
         .sort_values("cantidad", ascending=False)
@@ -75,81 +79,72 @@ def obtener_equipos_por_laboratorio():
 
 
 def obtener_estado_equipos():
-
     equipos = cargar_hoja("Equipos")
 
-    if equipos.empty:
-        return pd.DataFrame()
+    if equipos.empty or "estado" not in equipos.columns:
+        return pd.DataFrame(columns=["estado", "cantidad"])
 
     return (
-        equipos.groupby("estado")
+        equipos.assign(estado=equipos["estado"].fillna("Sin estado"))
+        .groupby("estado")
         .size()
         .reset_index(name="cantidad")
+        .sort_values("cantidad", ascending=False)
     )
 
 
 def obtener_estado_verificaciones():
-
     sesiones = consultar_sesiones_verificacion(100000)
 
-    if sesiones.empty:
-        return pd.DataFrame()
+    if sesiones.empty or "estado" not in sesiones.columns:
+        return pd.DataFrame(columns=["estado", "cantidad"])
 
     return (
-        sesiones.groupby("estado")
+        sesiones.assign(estado=sesiones["estado"].fillna("Sin estado"))
+        .groupby("estado")
         .size()
         .reset_index(name="cantidad")
+        .sort_values("cantidad", ascending=False)
     )
 
 
-def obtener_alertas():
-
+def obtener_alertas(limite=5):
     sesiones = consultar_sesiones_verificacion(100000)
-
     alertas = []
 
-    if sesiones.empty:
+    if sesiones.empty or "estado" not in sesiones.columns:
         return alertas
 
-    no_conformes = sesiones[
-        sesiones["estado"] == "No conforme"
-    ]
+    estados = sesiones["estado"].astype(str).str.strip().str.lower()
+    no_conformes = int((estados == "no conforme").sum())
+    incompletas = int((estados == "incompleta").sum())
 
-    incompletas = sesiones[
-        sesiones["estado"] == "Incompleta"
-    ]
-
-    if len(no_conformes):
-
+    if no_conformes > 0:
         alertas.append(
-            f"{len(no_conformes)} verificaciones NO conformes."
+            {
+                "nivel": "error",
+                "titulo": "Verificaciones no conformes",
+                "detalle": f"Se registran {no_conformes} sesión(es) no conforme(s).",
+            }
         )
 
-    if len(incompletas):
-
+    if incompletas > 0:
         alertas.append(
-            f"{len(incompletas)} verificaciones incompletas."
+            {
+                "nivel": "warning",
+                "titulo": "Verificaciones incompletas",
+                "detalle": f"Se registran {incompletas} sesión(es) incompleta(s).",
+            }
         )
 
-    return alertas
+    bitacora = consultar_bitacora_equipo(None, 100000)
+    if not bitacora.empty:
+        alertas.append(
+            {
+                "nivel": "info",
+                "titulo": "Eventos registrados",
+                "detalle": f"La bitácora contiene {len(bitacora)} evento(s).",
+            }
+        )
 
-def obtener_proximas_verificaciones():
-
-    equipos = cargar_hoja("Equipos")
-
-    if equipos.empty:
-        return pd.DataFrame()
-
-    columnas = [
-        "codigo_equipo",
-        "nombre_equipo",
-        "laboratorio",
-        "frecuencia_verificacion",
-    ]
-
-    existentes = [
-        c for c in columnas
-        if c in equipos.columns
-    ]
-
-    return equipos[existentes]
+    return alertas[:limite]
