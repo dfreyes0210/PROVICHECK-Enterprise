@@ -1,3 +1,4 @@
+import pandas as pd
 import streamlit as st
 import plotly.express as px
 
@@ -11,6 +12,8 @@ from utils.dashboard import (
     obtener_ultimas_verificaciones,
     obtener_bitacora_reciente,
     obtener_alertas,
+    obtener_proximas_verificaciones,
+    obtener_estado_general,
 )
 
 
@@ -68,9 +71,27 @@ equipos_laboratorio = obtener_equipos_por_laboratorio()
 ultimas_verificaciones = obtener_ultimas_verificaciones(8)
 actividad_reciente = obtener_bitacora_reciente(8)
 alertas = obtener_alertas(5)
+proximas_verificaciones = obtener_proximas_verificaciones()
+estado_general = obtener_estado_general()
 
 
 st.subheader("Centro de control")
+
+if estado_general["nivel"] == "error":
+    st.error(
+        f'### {estado_general["estado"]}\n\n'
+        f'{estado_general["detalle"]}'
+    )
+elif estado_general["nivel"] == "warning":
+    st.warning(
+        f'### {estado_general["estado"]}\n\n'
+        f'{estado_general["detalle"]}'
+    )
+else:
+    st.success(
+        f'### {estado_general["estado"]}\n\n'
+        f'{estado_general["detalle"]}'
+    )
 
 c1, c2, c3, c4 = st.columns(4)
 
