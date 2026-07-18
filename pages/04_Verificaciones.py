@@ -97,21 +97,21 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
             resultado = st.number_input(
                 "Resultado observado",
-                key=f"resultado_{punto['id_punto']}",
+                key=f"resultado_{codigo_equipo}_{punto['id_punto']}_{i}",
                 format=f"%.{DECIMALES}f",
             )
 
             observacion_tipo = st.selectbox(
                 "Observación",
                 OPCIONES_OBSERVACION,
-                key=f"obs_tipo_{punto['id_punto']}",
+                key=f"obs_tipo_{codigo_equipo}_{punto['id_punto']}_{i}",
             )
 
             observacion_texto = ""
             if observacion_tipo == "Otro":
                 observacion_texto = st.text_area(
                     "Detalle de observación",
-                    key=f"obs_txt_{punto['id_punto']}",
+                    key=f"obs_txt_{codigo_equipo}_{punto['id_punto']}_{i}",
                 )
 
             observacion_final = (
