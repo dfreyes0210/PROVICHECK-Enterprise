@@ -373,3 +373,200 @@ def obtener_estado_general():
         "estado": "🟢 Operación controlada",
         "detalle": "No se identifican alertas críticas de programación.",
     }
+
+
+def obtener_resumen_programacion():
+    programacion = obtener_proximas_verificaciones()
+
+    resumen = {
+        "vigentes": 0,
+        "proximas": 0,
+        "vencidas": 0,
+        "sin_verificar": 0,
+        "sin_frecuencia": 0,
+    }
+
+    if programacion.empty or "estado_programacion" not in programacion.columns:
+        return resumen
+
+    estados = programacion["estado_programacion"].astype(str)
+
+    resumen["vigentes"] = int(estados.str.contains("Vigente", na=False).sum())
+    resumen["proximas"] = int(estados.str.contains("Próxima", na=False).sum())
+    resumen["vencidas"] = int(estados.str.contains("Vencida", na=False).sum())
+    resumen["sin_verificar"] = int(
+        estados.str.contains("Sin verificar", na=False).sum()
+    )
+    resumen["sin_frecuencia"] = int(
+        estados.str.contains("Sin frecuencia", na=False).sum()
+    )
+
+    return resumen
+
+
+def obtener_indice_salud():
+    kpis = obtener_kpis()
+    programacion = obtener_resumen_programacion()
+
+    total_equipos = max(kpis["equipos"], 1)
+    total_sesiones = max(kpis["verificaciones"], 1)
+
+    proporcion_activos = kpis["activos"] / total_equipos
+    proporcion_conformidad = kpis["porcentaje_conformidad"] / 100
+    proporcion_vigentes = programacion["vigentes"] / total_equipos
+
+    penalizacion_programacion = (
+        programacion["vencidas"]
+        + programacion["sin_verificar"]
+        + programacion["proximas"] * 0.35
+    ) / total_equipos
+
+    penalizacion_sesiones = (
+        kpis["no_conformes"] + kpis["incompletas"] * 0.5
+    ) / total_sesiones
+
+    indice = (
+        proporcion_activos * 30
+        + proporcion_conformidad * 35
+        + proporcion_vigentes * 35
+        - penalizacion_programacion * 20
+        - penalizacion_sesiones * 15
+    )
+
+    indice = max(0.0, min(100.0, round(indice, 1)))
+
+    if indice >= 90:
+        nivel = "Excelente"
+        estado = "🟢"
+    elif indice >= 75:
+        nivel = "Bueno"
+        estado = "🟢"
+    elif indice >= 60:
+        nivel = "Aceptable"
+        estado = "🟡"
+    elif indice >= 40:
+        nivel = "En riesgo"
+        estado = "🟠"
+    else:
+        nivel = "Crítico"
+        estado = "🔴"
+
+    return {
+        "indice": indice,
+        "nivel": nivel,
+        "estado": estado,
+    }
+
+
+def obtener_agenda_critica(limite=10):
+    programacion = obtener_proximas_verificaciones()
+
+    if programacion.empty:
+        return programacion
+
+    estados_prioritarios = {
+        "🔴 Vencida",
+        "🔴 Sin verificar",
+        "🟡 Próxima",
+    }
+
+    agenda = programacion[
+        programacion["estado_programacion"].isin(estados_prioritarios)
+    ].copy()
+
+    columnas = [
+        columna
+        for columna in [
+            "codigo_equipo",
+            "nombre_equipo",
+            "laboratorio",
+            "frecuencia",
+            "ultima_verificacion",
+            "proxima_verificacion",
+            "estado_programacion",
+        ]
+        if columna in agenda.columns
+    ]
+
+    return agenda[columnas].head(limite).reset_index(drop=True)
+
+
+def obtener_tendencia_mensual():
+    sesiones = consultar_sesiones_verificacion(100000)
+
+    columnas_salida = ["mes", "verificaciones", "conformes", "no_conformes"]
+    if sesiones.empty or "fecha" not in sesiones.columns:
+        return pd.DataFrame(columns=columnas_salida)
+
+    df = sesiones.copy()
+    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce", dayfirst=True)
+    df = df.dropna(subset=["fecha"])
+
+    if df.empty:
+        return pd.DataFrame(columns=columnas_salida)
+
+    df["mes_periodo"] = df["fecha"].dt.to_period("M")
+    df["estado_normalizado"] = (
+        df.get("estado", "")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+
+    resumen = (
+        df.groupby("mes_periodo")
+        .agg(
+            verificaciones=("fecha", "size"),
+            conformes=(
+                "estado_normalizado",
+                lambda s: int((s == "conforme").sum()),
+            ),
+            no_conformes=(
+                "estado_normalizado",
+                lambda s: int((s == "no conforme").sum()),
+            ),
+        )
+        .reset_index()
+        .sort_values("mes_periodo")
+    )
+
+    resumen["mes"] = resumen["mes_periodo"].dt.strftime("%Y-%m")
+
+    return resumen[columnas_salida].tail(12).reset_index(drop=True)
+
+
+def obtener_ranking_equipos(limite=10):
+    sesiones = consultar_sesiones_verificacion(100000)
+
+    columnas_salida = [
+        "codigo_equipo",
+        "nombre_equipo",
+        "laboratorio",
+        "verificaciones",
+    ]
+
+    if sesiones.empty or "codigo_equipo" not in sesiones.columns:
+        return pd.DataFrame(columns=columnas_salida)
+
+    agrupadores = ["codigo_equipo"]
+
+    if "nombre_equipo" in sesiones.columns:
+        agrupadores.append("nombre_equipo")
+
+    if "laboratorio" in sesiones.columns:
+        agrupadores.append("laboratorio")
+
+    ranking = (
+        sesiones.groupby(agrupadores, dropna=False)
+        .size()
+        .reset_index(name="verificaciones")
+        .sort_values("verificaciones", ascending=False)
+        .head(limite)
+        .reset_index(drop=True)
+    )
+
+    for columna in columnas_salida:
+        if columna not in ranking.columns:
+            ranking[columna] = ""
+
+    return ranking[columnas_salida]
