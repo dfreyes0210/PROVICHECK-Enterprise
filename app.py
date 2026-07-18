@@ -1,176 +1,236 @@
-import pandas as pd
+import streamlit as st
+import plotly.express as px
 
-from utils.data import cargar_hoja
-from utils.sqlite_consultas import (
-    consultar_historial_equipo,
-    consultar_sesiones_verificacion,
-    consultar_bitacora_equipo,
+from config import APP_NAME, VERSION
+from database import crear_base_datos
+from utils.ui import aplicar_estilo, encabezado, login_limpio, pie_pagina
+from utils.dashboard import (
+    obtener_kpis,
+    obtener_estado_verificaciones,
+    obtener_equipos_por_laboratorio,
+    obtener_ultimas_verificaciones,
+    obtener_bitacora_reciente,
+    obtener_alertas,
 )
 
 
-def obtener_kpis():
-    equipos = cargar_hoja("Equipos")
+st.set_page_config(
+    page_title=APP_NAME,
+    page_icon="🧪",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-    sesiones = consultar_sesiones_verificacion(100000)
-
-    total_equipos = len(equipos)
-
-    equipos_activos = 0
-
-    if "estado" in equipos.columns:
-        equipos_activos = equipos[
-            equipos["estado"]
-            .astype(str)
-            .str.lower()
-            .str.contains("activo|operativo|disponible")
-        ].shape[0]
-
-    verificaciones = len(sesiones)
-
-    conformes = 0
-    no_conformes = 0
-    incompletas = 0
-
-    if not sesiones.empty:
-
-        conformes = (sesiones["estado"] == "Conforme").sum()
-
-        no_conformes = (sesiones["estado"] == "No conforme").sum()
-
-        incompletas = (sesiones["estado"] == "Incompleta").sum()
-
-    sesiones_cerradas = conformes + no_conformes
-    porcentaje_conformidad = (
-        round((conformes / sesiones_cerradas) * 100, 1)
-        if sesiones_cerradas > 0
-        else 0.0
-    )
-
-    alertas = no_conformes + incompletas
-
-    return {
-        "equipos": int(total_equipos),
-        "activos": int(equipos_activos),
-        "verificaciones": int(verificaciones),
-        "conformes": int(conformes),
-        "no_conformes": int(no_conformes),
-        "incompletas": int(incompletas),
-        "alertas": int(alertas),
-        "porcentaje_conformidad": porcentaje_conformidad,
-    }
+aplicar_estilo()
+crear_base_datos()
 
 
-def obtener_ultimas_verificaciones(limite=10):
-
-    return consultar_sesiones_verificacion(limite)
-
-
-def obtener_bitacora_reciente(limite=10):
-
-    return consultar_bitacora_equipo(None, limite)
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
 
 
-def obtener_equipos_por_laboratorio():
+if not st.session_state["autenticado"]:
+    encabezado()
 
-    equipos = cargar_hoja("Equipos")
+    col_izquierda, col_login, col_derecha = st.columns([1, 1.15, 1])
 
-    if equipos.empty:
-        return pd.DataFrame()
+    with col_login:
+        login_limpio()
 
-    return (
-        equipos.groupby("laboratorio")
-        .size()
-        .reset_index(name="cantidad")
-        .sort_values("cantidad", ascending=False)
-    )
+    st.stop()
 
 
-def obtener_estado_equipos():
+with st.sidebar:
+    st.title("PROVICHECK")
+    st.caption(f"Enterprise · {VERSION}")
+    st.write(f"Usuario: **{st.session_state.get('usuario', '')}**")
 
-    equipos = cargar_hoja("Equipos")
+    st.divider()
 
-    if equipos.empty:
-        return pd.DataFrame()
+    st.page_link("app.py", label="🏠 Dashboard")
+    st.page_link("pages/01_Equipos.py", label="🧪 Equipos")
+    st.page_link("pages/02_Hoja_de_Vida.py", label="📘 Hoja de Vida")
+    st.page_link("pages/03_Administracion.py", label="⚙️ Administración")
+    st.page_link("pages/04_Verificaciones.py", label="✅ Verificaciones")
 
-    return (
-        equipos.groupby("estado")
-        .size()
-        .reset_index(name="cantidad")
-    )
+    st.divider()
 
-
-def obtener_estado_verificaciones():
-
-    sesiones = consultar_sesiones_verificacion(100000)
-
-    if sesiones.empty:
-        return pd.DataFrame()
-
-    return (
-        sesiones.groupby("estado")
-        .size()
-        .reset_index(name="cantidad")
-    )
+    if st.button("Cerrar sesión", width="stretch"):
+        st.session_state["autenticado"] = False
+        st.rerun()
 
 
-def obtener_alertas(limite=5):
+encabezado()
 
-    sesiones = consultar_sesiones_verificacion(100000)
+kpis = obtener_kpis()
+estado_verificaciones = obtener_estado_verificaciones()
+equipos_laboratorio = obtener_equipos_por_laboratorio()
+ultimas_verificaciones = obtener_ultimas_verificaciones(8)
+actividad_reciente = obtener_bitacora_reciente(8)
+alertas = obtener_alertas(5)
 
-    alertas = []
 
-    if sesiones.empty or "estado" not in sesiones.columns:
-        return alertas
+st.subheader("Centro de control")
 
-    estados = sesiones["estado"].astype(str).str.strip().str.lower()
+c1, c2, c3, c4 = st.columns(4)
 
-    no_conformes = int((estados == "no conforme").sum())
-    incompletas = int((estados == "incompleta").sum())
+c1.metric(
+    "Equipos registrados",
+    kpis["equipos"],
+    delta=f'{kpis["activos"]} activos',
+)
 
-    if no_conformes > 0:
-        alertas.append(
-            {
-                "nivel": "error",
-                "titulo": "Verificaciones no conformes",
-                "detalle": (
-                    f"Se registran {no_conformes} "
-                    "sesión(es) no conforme(s)."
-                ),
-            }
+c2.metric(
+    "Verificaciones",
+    kpis["verificaciones"],
+    delta=f'{kpis["conformes"]} conformes',
+)
+
+c3.metric(
+    "Conformidad",
+    f'{kpis["porcentaje_conformidad"]:.1f} %',
+)
+
+c4.metric(
+    "Alertas",
+    kpis["alertas"],
+    delta=(
+        f'{kpis["no_conformes"]} no conformes · '
+        f'{kpis["incompletas"]} incompletas'
+    ),
+    delta_color="inverse",
+)
+
+st.divider()
+
+col_grafico_1, col_grafico_2 = st.columns([1, 1.25])
+
+with col_grafico_1:
+    st.markdown("### Estado de verificaciones")
+
+    if estado_verificaciones.empty:
+        st.info("Aún no hay verificaciones registradas.")
+    else:
+        fig_estado = px.pie(
+            estado_verificaciones,
+            names="estado",
+            values="cantidad",
+            hole=0.58,
+            color="estado",
+            color_discrete_map={
+                "Conforme": "#1F7A3E",
+                "No conforme": "#C62828",
+                "Incompleta": "#D97706",
+            },
+        )
+        fig_estado.update_traces(
+            textposition="inside",
+            textinfo="percent+label",
+        )
+        fig_estado.update_layout(
+            height=380,
+            margin=dict(l=10, r=10, t=10, b=10),
+            showlegend=True,
+        )
+        st.plotly_chart(fig_estado, width="stretch")
+
+with col_grafico_2:
+    st.markdown("### Equipos por laboratorio")
+
+    if equipos_laboratorio.empty:
+        st.info("No hay información de laboratorios.")
+    else:
+        fig_laboratorios = px.bar(
+            equipos_laboratorio,
+            x="laboratorio",
+            y="cantidad",
+            text="cantidad",
+        )
+        fig_laboratorios.update_traces(
+            marker_color="#005AA7",
+            textposition="outside",
+        )
+        fig_laboratorios.update_layout(
+            height=380,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_title="Laboratorio",
+            yaxis_title="Equipos",
+            showlegend=False,
+        )
+        st.plotly_chart(fig_laboratorios, width="stretch")
+
+st.divider()
+
+col_verificaciones, col_alertas = st.columns([1.55, 1])
+
+with col_verificaciones:
+    st.markdown("### Últimas verificaciones")
+
+    if ultimas_verificaciones.empty:
+        st.info("Aún no existen sesiones registradas.")
+    else:
+        columnas_visibles = [
+            columna
+            for columna in [
+                "fecha",
+                "hora",
+                "codigo_equipo",
+                "nombre_equipo",
+                "laboratorio",
+                "responsable",
+                "estado",
+                "total_puntos",
+            ]
+            if columna in ultimas_verificaciones.columns
+        ]
+
+        st.dataframe(
+            ultimas_verificaciones[columnas_visibles],
+            width="stretch",
+            hide_index=True,
         )
 
-    if incompletas > 0:
-        alertas.append(
-            {
-                "nivel": "warning",
-                "titulo": "Verificaciones incompletas",
-                "detalle": (
-                    f"Se registran {incompletas} "
-                    "sesión(es) incompleta(s)."
-                ),
-            }
-        )
+with col_alertas:
+    st.markdown("### Alertas y atención")
 
-    return alertas[:limite]
+    if not alertas:
+        st.success("No existen alertas operativas.")
+    else:
+        for alerta in alertas:
+            texto = f'**{alerta["titulo"]}**\n\n{alerta["detalle"]}'
 
+            if alerta["nivel"] == "error":
+                st.error(texto)
+            elif alerta["nivel"] == "warning":
+                st.warning(texto)
+            else:
+                st.info(texto)
 
-def obtener_proximas_verificaciones():
+st.divider()
 
-    equipos = cargar_hoja("Equipos")
+st.markdown("### Actividad reciente")
 
-    if equipos.empty:
-        return pd.DataFrame()
-
-    columnas = [
-        "codigo_equipo",
-        "nombre_equipo",
-        "laboratorio",
-        "frecuencia_verificacion",
+if actividad_reciente.empty:
+    st.info("La bitácora todavía no tiene eventos.")
+else:
+    columnas_bitacora = [
+        columna
+        for columna in [
+            "fecha",
+            "hora",
+            "codigo_equipo",
+            "evento",
+            "detalle",
+            "usuario",
+            "origen",
+        ]
+        if columna in actividad_reciente.columns
     ]
 
-    existentes = [
-        c for c in columnas
-        if c in equipos.columns
-    ]
+    st.dataframe(
+        actividad_reciente[columnas_bitacora],
+        width="stretch",
+        hide_index=True,
+    )
 
-    return equipos[existentes]
+pie_pagina()
