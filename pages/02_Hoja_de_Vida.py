@@ -2,6 +2,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from database import crear_base_datos
+
 from utils.ui import aplicar_estilo, encabezado
 from utils.formatos import formatear_numero
 from utils.documentos import actualizar_estados_documentos, eliminar_documento, leer_documento, registrar_documento
@@ -19,6 +21,8 @@ st.set_page_config(
     page_icon="📘",
     layout="wide",
 )
+
+crear_base_datos()
 
 aplicar_estilo()
 encabezado()

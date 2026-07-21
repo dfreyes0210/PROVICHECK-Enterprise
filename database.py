@@ -5,6 +5,7 @@ DB_PATH = Path("data") / "provicheck.db"
 
 
 def get_connection():
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
@@ -61,6 +62,39 @@ def crear_base_datos():
         usuario TEXT,
         origen TEXT
     )
+    """)
+
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS documentos_equipo (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        codigo_equipo TEXT NOT NULL,
+        tipo_documento TEXT NOT NULL,
+        titulo TEXT,
+        nombre_archivo TEXT NOT NULL,
+        ruta_archivo TEXT NOT NULL,
+        mime_type TEXT,
+        tamano_bytes INTEGER,
+        fecha_carga TEXT NOT NULL,
+        hora_carga TEXT NOT NULL,
+        fecha_emision TEXT,
+        fecha_vencimiento TEXT,
+        responsable TEXT,
+        proveedor TEXT,
+        version TEXT,
+        observaciones TEXT,
+        estado TEXT DEFAULT 'Sin vencimiento',
+        activo INTEGER DEFAULT 1
+    )
+    """)
+
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_documentos_equipo_codigo
+    ON documentos_equipo(codigo_equipo)
+    """)
+
+    cur.execute("""
+    CREATE INDEX IF NOT EXISTS idx_documentos_equipo_vencimiento
+    ON documentos_equipo(fecha_vencimiento)
     """)
 
     conn.commit()
