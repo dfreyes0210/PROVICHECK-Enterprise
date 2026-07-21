@@ -4,11 +4,13 @@ import streamlit as st
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.formatos import formatear_numero
+from utils.documentos import actualizar_estados_documentos, eliminar_documento, leer_documento, registrar_documento
 from utils.sqlite_consultas import (
     consultar_ultima_verificacion,
     consultar_historial_equipo,
     consultar_eventos_equipo,
     consultar_detalle_sesion,
+    consultar_documentos_equipo,
 )
 
 
@@ -65,6 +67,8 @@ frecuencia = equipo.get("frecuencia_verificacion", "Sin frecuencia")
 ultima = consultar_ultima_verificacion(codigo)
 historial = consultar_historial_equipo(codigo, limite=20)
 eventos = consultar_eventos_equipo(codigo, limite=20)
+actualizar_estados_documentos(codigo)
+documentos = consultar_documentos_equipo(codigo)
 
 st.title("📘 Hoja de Vida del Equipo")
 st.subheader(f"{codigo} · {nombre}")
@@ -113,11 +117,12 @@ else:
     total_verificaciones = 0
     total_eventos = 0
 
-k1, k2, k3, k4 = st.columns(4)
+k1, k2, k3, k4, k5 = st.columns(5)
 k1.metric("Última verificación", ultima_fecha)
 k2.metric("Estado última sesión", estado_visual(ultima_estado))
 k3.metric("Sesiones registradas", total_verificaciones)
 k4.metric("Eventos en bitácora", total_eventos)
+k5.metric("Documentos", len(documentos))
 
 tabs = st.tabs(
     [
@@ -312,7 +317,71 @@ with tabs[4]:
 
 with tabs[5]:
     st.markdown("### Biblioteca documental")
-    st.info("Aquí se consultarán certificados, manuales, procedimientos y evidencias del equipo.")
+    st.caption("Carga, consulta y descarga de documentos asociados al equipo.")
+
+    with st.expander("➕ Cargar nuevo documento", expanded=documentos.empty):
+        with st.form(f"form_documento_{codigo}", clear_on_submit=True):
+            d1, d2 = st.columns(2)
+            with d1:
+                tipo_documento = st.selectbox("Tipo de documento *", ["Certificado de calibración","Certificado de verificación","Manual","Procedimiento","Ficha técnica","Fotografía","Mantenimiento","Calificación","Otro"])
+                titulo_documento = st.text_input("Título", placeholder="Ej.: Certificado de calibración 2026")
+                archivo_documento = st.file_uploader("Seleccionar archivo *", type=["pdf","png","jpg","jpeg","webp","doc","docx","xls","xlsx","csv","txt"])
+                responsable_documento = st.text_input("Responsable", value=str(st.session_state.get("usuario", "")))
+            with d2:
+                fecha_emision_documento = st.date_input("Fecha de emisión", value=None)
+                tiene_vencimiento = st.checkbox("Tiene fecha de vencimiento")
+                fecha_vencimiento_documento = st.date_input("Fecha de vencimiento") if tiene_vencimiento else None
+                proveedor_documento = st.text_input("Proveedor o emisor")
+                version_documento = st.text_input("Versión")
+                observaciones_documento = st.text_area("Observaciones")
+            guardar_documento = st.form_submit_button("💾 Guardar documento", type="primary", width="stretch")
+
+        if guardar_documento:
+            if archivo_documento is None:
+                st.error("Debe seleccionar un archivo.")
+            elif tiene_vencimiento and fecha_emision_documento and fecha_vencimiento_documento < fecha_emision_documento:
+                st.error("La fecha de vencimiento no puede ser anterior a la fecha de emisión.")
+            else:
+                try:
+                    registrar_documento(codigo, tipo_documento, archivo_documento, titulo_documento, fecha_emision_documento, fecha_vencimiento_documento, responsable_documento, proveedor_documento, version_documento, observaciones_documento)
+                    st.success("Documento cargado correctamente.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"No fue posible guardar el documento: {exc}")
+
+    documentos = consultar_documentos_equipo(codigo)
+    if documentos.empty:
+        st.info("Este equipo aún no tiene documentos registrados.")
+    else:
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Total", len(documentos))
+        m2.metric("🟢 Vigentes", int((documentos["estado"] == "Vigente").sum()))
+        m3.metric("🟡 Próximos", int((documentos["estado"] == "Próximo a vencer").sum()))
+        m4.metric("🔴 Vencidos", int((documentos["estado"] == "Vencido").sum()))
+        for _, documento in documentos.iterrows():
+            estado_doc = str(documento.get("estado", "Sin estado"))
+            icono = {"Vigente":"🟢","Próximo a vencer":"🟡","Vencido":"🔴","Sin vencimiento":"⚪"}.get(estado_doc,"⚪")
+            with st.container(border=True):
+                c_info, c_acciones = st.columns([3,1])
+                with c_info:
+                    st.markdown(f"#### {icono} {documento.get('titulo') or documento.get('nombre_archivo')}")
+                    st.write(f"**Tipo:** {documento.get('tipo_documento','')}")
+                    st.write(f"**Archivo:** {documento.get('nombre_archivo','')}")
+                    if documento.get('fecha_vencimiento'):
+                        st.caption(f"Vence: {documento.get('fecha_vencimiento')}")
+                    if documento.get('observaciones'):
+                        st.write(f"**Observaciones:** {documento.get('observaciones')}")
+                with c_acciones:
+                    st.metric("Estado", estado_doc)
+                    try:
+                        st.download_button("⬇️ Descargar", data=leer_documento(documento.get('ruta_archivo')), file_name=documento.get('nombre_archivo'), mime=documento.get('mime_type') or 'application/octet-stream', key=f"descargar_doc_{documento.get('id')}", width="stretch")
+                    except FileNotFoundError:
+                        st.error("Archivo no disponible.")
+                    confirmar = st.checkbox("Confirmar eliminación", key=f"confirmar_doc_{documento.get('id')}")
+                    if st.button("🗑️ Eliminar", key=f"eliminar_doc_{documento.get('id')}", disabled=not confirmar, width="stretch"):
+                        eliminar_documento(documento.get('id'))
+                        st.success("Documento eliminado.")
+                        st.rerun()
 
 with tabs[6]:
     st.markdown("### Auditoría")
