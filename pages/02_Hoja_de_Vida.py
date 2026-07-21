@@ -6,7 +6,12 @@ from database import crear_base_datos
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.formatos import formatear_numero
-from utils.documentos import actualizar_estados_documentos, eliminar_documento, leer_documento, registrar_documento
+from utils.documentos import (
+    actualizar_estados_documentos,
+    eliminar_documento,
+    leer_documento,
+    registrar_documento,
+)
 from utils.sqlite_consultas import (
     consultar_ultima_verificacion,
     consultar_historial_equipo,
@@ -26,6 +31,77 @@ crear_base_datos()
 
 aplicar_estilo()
 encabezado()
+
+
+st.markdown(
+    """
+    <style>
+    /* Etiquetas de los controles del formulario documental */
+    div[data-testid="stTextInput"] label,
+    div[data-testid="stTextArea"] label,
+    div[data-testid="stSelectbox"] label,
+    div[data-testid="stDateInput"] label,
+    div[data-testid="stFileUploader"] label,
+    div[data-testid="stCheckbox"] label {
+        color: #1f2937 !important;
+        font-weight: 600 !important;
+        opacity: 1 !important;
+    }
+
+    /* Texto auxiliar y descripción del cargador */
+    div[data-testid="stFileUploader"] small,
+    div[data-testid="stFileUploader"] span,
+    div[data-testid="stFileUploader"] p {
+        color: #374151 !important;
+        opacity: 1 !important;
+    }
+
+    /* Texto visible del checkbox */
+    div[data-testid="stCheckbox"] p,
+    div[data-testid="stCheckbox"] span {
+        color: #1f2937 !important;
+        opacity: 1 !important;
+    }
+
+    /* Encabezado del expander oscuro */
+    div[data-testid="stExpander"] summary p,
+    div[data-testid="stExpander"] summary span {
+        color: #ffffff !important;
+        font-weight: 600 !important;
+        opacity: 1 !important;
+    }
+
+    /* Texto dentro de campos oscuros */
+    div[data-testid="stTextInput"] input,
+    div[data-testid="stTextArea"] textarea,
+    div[data-testid="stDateInput"] input {
+        color: #ffffff !important;
+        opacity: 1 !important;
+    }
+
+    /* Texto seleccionado en listas */
+    div[data-testid="stSelectbox"] div[data-baseweb="select"] * {
+        color: #ffffff !important;
+        opacity: 1 !important;
+    }
+
+    /* Placeholder de entradas */
+    input::placeholder,
+    textarea::placeholder {
+        color: #d1d5db !important;
+        opacity: 1 !important;
+    }
+
+    /* Títulos y textos generales del área documental */
+    div[data-testid="stForm"] p,
+    div[data-testid="stForm"] label {
+        opacity: 1 !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 
 def estado_visual(estado):
