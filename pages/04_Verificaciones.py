@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from zoneinfo import ZoneInfo
 
 import streamlit as st
 
@@ -168,7 +169,7 @@ with st.container(border=True):
         ),
     )
 
-    ahora = datetime.now()
+    ahora = datetime.now(ZoneInfo("America/Bogota"))
 
     if modo_captura == "Tiempo real":
         fecha_registro = ahora.date()
