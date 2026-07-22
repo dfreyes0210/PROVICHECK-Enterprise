@@ -1,10 +1,15 @@
-import pandas as pd
 import streamlit as st
 import plotly.express as px
 
-from config import APP_NAME, VERSION
+from config import APP_NAME
 from database import crear_base_datos
-from utils.ui import aplicar_estilo, encabezado, login_limpio, pie_pagina, sidebar_pro
+from utils.ui import (
+    aplicar_estilo,
+    encabezado,
+    login_limpio,
+    pie_pagina,
+    sidebar_pro,
+)
 from utils.dashboard import (
     obtener_kpis,
     obtener_estado_verificaciones,
@@ -12,7 +17,6 @@ from utils.dashboard import (
     obtener_ultimas_verificaciones,
     obtener_bitacora_reciente,
     obtener_alertas,
-    obtener_proximas_verificaciones,
     obtener_estado_general,
     obtener_resumen_programacion,
     obtener_indice_salud,
@@ -20,7 +24,6 @@ from utils.dashboard import (
     obtener_tendencia_mensual,
     obtener_ranking_equipos,
 )
-
 
 st.set_page_config(
     page_title=APP_NAME,
@@ -32,24 +35,20 @@ st.set_page_config(
 aplicar_estilo()
 crear_base_datos()
 
-
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
-
 
 if not st.session_state["autenticado"]:
     encabezado()
 
-    col_izquierda, col_login, col_derecha = st.columns([1, 1.15, 1])
+    _, col_login, _ = st.columns([1, 1.15, 1])
 
     with col_login:
         login_limpio()
 
     st.stop()
 
-
 sidebar_pro()
-
 encabezado()
 
 kpis = obtener_kpis()
@@ -58,7 +57,6 @@ equipos_laboratorio = obtener_equipos_por_laboratorio()
 ultimas_verificaciones = obtener_ultimas_verificaciones(8)
 actividad_reciente = obtener_bitacora_reciente(8)
 alertas = obtener_alertas(5)
-proximas_verificaciones = obtener_proximas_verificaciones()
 estado_general = obtener_estado_general()
 resumen_programacion = obtener_resumen_programacion()
 indice_salud = obtener_indice_salud()
@@ -66,10 +64,9 @@ agenda_critica = obtener_agenda_critica(10)
 tendencia_mensual = obtener_tendencia_mensual()
 ranking_equipos = obtener_ranking_equipos(8)
 
-
 st.markdown("## Centro de control")
 
-col_salud, col_estado = st.columns([1, 1.7])
+col_salud, col_estado = st.columns([1, 1.75])
 
 with col_salud:
     with st.container(border=True):
@@ -84,17 +81,17 @@ with col_salud:
 with col_estado:
     if estado_general["nivel"] == "error":
         st.error(
-            f'### {estado_general["estado"]}\n\n'
+            f'### 🔴 {estado_general["estado"]}\n\n'
             f'{estado_general["detalle"]}'
         )
     elif estado_general["nivel"] == "warning":
         st.warning(
-            f'### {estado_general["estado"]}\n\n'
+            f'### 🟡 {estado_general["estado"]}\n\n'
             f'{estado_general["detalle"]}'
         )
     else:
         st.success(
-            f'### {estado_general["estado"]}\n\n'
+            f'### 🟢 {estado_general["estado"]}\n\n'
             f'{estado_general["detalle"]}'
         )
 
@@ -128,8 +125,8 @@ c4.metric(
 )
 
 st.markdown("### Semáforo de programación")
-s1, s2, s3, s4, s5 = st.columns(5)
 
+s1, s2, s3, s4, s5 = st.columns(5)
 s1.metric("🟢 Al día", resumen_programacion["vigentes"])
 s2.metric("🟡 Próximas", resumen_programacion["proximas"])
 s3.metric("🔴 Vencidas", resumen_programacion["vencidas"])
@@ -153,7 +150,7 @@ with col_grafico_1:
             hole=0.58,
             color="estado",
             color_discrete_map={
-                "Conforme": "#1F7A3E",
+                "Conforme": "#147A3B",
                 "No conforme": "#C62828",
                 "Incompleta": "#D97706",
             },
@@ -182,7 +179,7 @@ with col_grafico_2:
             text="cantidad",
         )
         fig_laboratorios.update_traces(
-            marker_color="#005AA7",
+            marker_color="#0759C7",
             textposition="outside",
         )
         fig_laboratorios.update_layout(
@@ -209,6 +206,10 @@ with col_tendencia:
             x="mes",
             y="verificaciones",
             markers=True,
+        )
+        fig_tendencia.update_traces(
+            line_color="#0759C7",
+            marker_color="#147A3B",
         )
         fig_tendencia.update_layout(
             height=350,
@@ -297,6 +298,7 @@ else:
             if columna in ranking_equipos.columns
         ],
     )
+    fig_ranking.update_traces(marker_color="#147A3B")
     fig_ranking.update_layout(
         height=360,
         margin=dict(l=10, r=10, t=10, b=10),
