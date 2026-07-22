@@ -1,191 +1,164 @@
 import html
-
 import streamlit as st
-
 from config import APP_NAME, APP_SUBTITLE, VERSION
 
-VERDE_PROVIDENCIA = "#1F7A3E"
-VERDE_OSCURO = "#155D2E"
-AZUL_INCAUCA = "#005AA7"
-COLOR_FONDO = "#F4F7F5"
-COLOR_TARJETA = "#FFFFFF"
-COLOR_TEXTO = "#1F2937"
-COLOR_TEXTO_SUAVE = "#64748B"
-COLOR_BORDE = "#DDE6E0"
+VERDE_PROVIDENCIA = '#147A3B'
+VERDE_OSCURO = '#075E32'
+AZUL_INCAUCA = '#0759C7'
+AZUL_OSCURO = '#073B8C'
+COLOR_FONDO = '#F5F8FC'
+COLOR_TARJETA = '#FFFFFF'
+COLOR_TEXTO = '#0F2747'
+COLOR_TEXTO_SUAVE = '#5F718A'
+COLOR_BORDE = '#D5E1F0'
 
 
 def aplicar_estilo():
-    st.markdown(
-        f"""
-        <style>
-        .stApp {{
-            background: linear-gradient(180deg, #FFFFFF 0%, {COLOR_FONDO} 100%);
-            color: {COLOR_TEXTO};
-        }}
+    st.markdown(f'''
+    <style>
+    html, body, [class*="css"] {{ font-family: "Segoe UI", Arial, sans-serif; }}
+    .stApp {{
+        background: radial-gradient(circle at top right, rgba(7,89,199,.06), transparent 28%),
+                    linear-gradient(180deg,#FFFFFF 0%,{COLOR_FONDO} 100%);
+        color:{COLOR_TEXTO};
+    }}
+    .block-container {{ max-width:1500px; padding-top:1rem; padding-bottom:2rem; }}
+    h1,h2,h3,h4,h5,h6,p,label,span {{ color:{COLOR_TEXTO}; }}
+    [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {{ color:{COLOR_TEXTO_SUAVE}!important; }}
 
-        [data-testid="stSidebar"],
-        section[data-testid="stSidebar"] {{
-            background: linear-gradient(
-                180deg,
-                {VERDE_OSCURO} 0%,
-                {VERDE_PROVIDENCIA} 65%,
-                #25884A 100%
-            ) !important;
-        }}
+    [data-testid="stSidebar"], section[data-testid="stSidebar"] {{
+        background:linear-gradient(180deg,{VERDE_OSCURO} 0%,#08633E 42%,#064C58 72%,{AZUL_OSCURO} 100%)!important;
+        border-right:1px solid rgba(255,255,255,.08);
+    }}
+    [data-testid="stSidebar"] * {{ color:#FFFFFF!important; }}
+    [data-testid="stSidebar"] hr {{ border-color:rgba(255,255,255,.18)!important; }}
+    [data-testid="stSidebar"] a {{ border-radius:10px; padding:.28rem .42rem; transition:.2s ease; }}
+    [data-testid="stSidebar"] a:hover {{ background:linear-gradient(90deg,rgba(29,184,93,.85),rgba(7,89,199,.82)); }}
+    .sidebar-brand {{ padding:.35rem .2rem .65rem; }}
+    .sidebar-brand-title {{ color:#FFF!important; font-size:1.28rem; font-weight:850; }}
+    .sidebar-brand-subtitle {{ color:rgba(255,255,255,.74)!important; font-size:.78rem; }}
+    .sidebar-user {{ margin-top:.45rem; padding:.8rem; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); border-radius:13px; }}
+    .sidebar-user strong,.sidebar-user span {{ color:#FFF!important; }}
 
-        [data-testid="stSidebar"] * {{
-            color: #FFFFFF !important;
-        }}
+    .main-header {{
+        padding:1.05rem 1.35rem; border-radius:15px;
+        background:linear-gradient(100deg,{VERDE_OSCURO} 0%,{VERDE_PROVIDENCIA} 30%,#087E79 58%,{AZUL_INCAUCA} 100%);
+        color:#FFF; margin-bottom:1.1rem; box-shadow:0 10px 28px rgba(7,59,140,.16);
+    }}
+    .main-header h1 {{ color:#FFF!important; margin:0; font-size:1.2rem; font-weight:800; }}
+    .main-header p {{ color:rgba(255,255,255,.96)!important; margin:.18rem 0 0; font-size:.86rem; }}
 
-        .main-header {{
-            padding: 1.45rem 1.7rem;
-            border-radius: 20px;
-            background: linear-gradient(
-                105deg,
-                {VERDE_OSCURO} 0%,
-                {VERDE_PROVIDENCIA} 75%,
-                {AZUL_INCAUCA} 100%
-            );
-            color: #FFFFFF;
-            margin-bottom: 1.25rem;
-            box-shadow: 0 8px 24px rgba(15, 76, 42, 0.12);
-        }}
+    [data-testid="stMetric"] {{
+        background:linear-gradient(145deg,#FFF 0%,#FBFDFF 100%); border:1px solid {COLOR_BORDE};
+        border-top:3px solid {VERDE_PROVIDENCIA}; border-radius:14px; padding:.9rem 1rem;
+        box-shadow:0 5px 16px rgba(15,39,71,.05);
+    }}
+    [data-testid="stMetricLabel"] p {{ color:{COLOR_TEXTO_SUAVE}!important; font-weight:700!important; }}
+    [data-testid="stMetricValue"] {{ color:{COLOR_TEXTO}!important; font-weight:850!important; }}
+    [data-testid="stMetricDelta"] div {{ font-weight:700!important; }}
 
-        .main-header h1 {{
-            color: #FFFFFF !important;
-            margin: 0;
-            font-size: 2rem;
-        }}
+    div[data-testid="stVerticalBlockBorderWrapper"] {{
+        border:1px solid {COLOR_BORDE}!important; border-radius:15px!important;
+        background:linear-gradient(145deg,#FFF,#FBFDFF)!important;
+        box-shadow:0 5px 16px rgba(15,39,71,.055);
+    }}
+    .stTextInput input,.stNumberInput input,.stTextArea textarea,[data-baseweb="select"]>div {{
+        background:#FFF!important; color:{COLOR_TEXTO}!important; border-color:#BFD0E5!important; border-radius:9px!important;
+    }}
+    .stTextInput label,.stNumberInput label,.stTextArea label,.stSelectbox label,.stFileUploader label {{ color:{COLOR_TEXTO}!important; font-weight:700!important; }}
 
-        .main-header p {{
-            color: rgba(255, 255, 255, 0.95) !important;
-            margin: 0.25rem 0 0 0;
-        }}
+    .stButton>button,.stFormSubmitButton>button {{
+        width:100%; border:0; border-radius:10px;
+        background:linear-gradient(100deg,{VERDE_OSCURO},{VERDE_PROVIDENCIA},{AZUL_INCAUCA});
+        color:#FFF!important; font-weight:800; min-height:2.55rem; box-shadow:0 6px 16px rgba(7,89,199,.15);
+    }}
+    .stButton>button:hover,.stFormSubmitButton>button:hover {{ filter:brightness(1.06); transform:translateY(-1px); }}
 
-        [data-testid="stMetric"] {{
-            background: {COLOR_TARJETA};
-            border: 1px solid {COLOR_BORDE};
-            border-top: 4px solid {VERDE_PROVIDENCIA};
-            border-radius: 16px;
-            padding: 1rem;
-        }}
+    .equipment-card {{
+        min-height:315px; margin-bottom:.8rem; padding:1.05rem; border-radius:15px;
+        background:linear-gradient(145deg,#FFF,#FBFDFF); border:1px solid {COLOR_BORDE};
+        border-top:4px solid {VERDE_PROVIDENCIA}; box-shadow:0 7px 20px rgba(15,39,71,.055);
+    }}
+    .equipment-code {{ color:{AZUL_INCAUCA}; font-size:1.25rem; font-weight:850; }}
+    .equipment-name {{ color:{COLOR_TEXTO}; font-size:1rem; font-weight:750; margin-bottom:.75rem; }}
+    .equipment-line {{ color:{COLOR_TEXTO_SUAVE}; font-size:.88rem; line-height:1.48; margin-bottom:.24rem; }}
+    .equipment-line strong {{ color:{COLOR_TEXTO}; }}
 
-        .stButton > button,
-        .stFormSubmitButton > button {{
-            width: 100%;
-            border: none;
-            border-radius: 11px;
-            background: linear-gradient(100deg, {VERDE_OSCURO}, {VERDE_PROVIDENCIA});
-            color: #FFFFFF !important;
-            font-weight: 700;
-        }}
+    .verification-card-title {{ display:flex; align-items:center; gap:.55rem; margin-bottom:.15rem; font-size:1.08rem; font-weight:850; color:{COLOR_TEXTO}; }}
+    .verification-card-badge {{ width:2.1rem; height:2.1rem; display:inline-flex; align-items:center; justify-content:center; border-radius:50%; background:linear-gradient(135deg,#EAF8EF,#EAF3FF); border:1px solid #C7DDF4; }}
 
-        .equipment-card {{
-            min-height: 310px;
-            margin-bottom: 0.9rem;
-            padding: 1.15rem;
-            border-radius: 16px;
-            background: {COLOR_TARJETA};
-            border: 1px solid {COLOR_BORDE};
-            border-top: 5px solid {VERDE_PROVIDENCIA};
-        }}
-
-        .equipment-code {{
-            color: {VERDE_OSCURO};
-            font-size: 1.35rem;
-            font-weight: 800;
-        }}
-
-        .equipment-name {{
-            color: {COLOR_TEXTO};
-            font-size: 1.02rem;
-            font-weight: 700;
-            margin-bottom: 0.85rem;
-        }}
-
-        .equipment-line {{
-            color: {COLOR_TEXTO_SUAVE};
-            font-size: 0.90rem;
-            line-height: 1.55;
-            margin-bottom: 0.25rem;
-        }}
-
-        .tag-ok,
-        .tag-warn,
-        .tag-danger,
-        .tag-info {{
-            display: inline-block;
-            padding: 0.28rem 0.70rem;
-            border-radius: 999px;
-            font-size: 0.80rem;
-            font-weight: 750;
-        }}
-
-        .tag-ok {{ background: #DCFCE7; color: #166534; }}
-        .tag-warn {{ background: #FEF3C7; color: #92400E; }}
-        .tag-danger {{ background: #FEE2E2; color: #991B1B; }}
-        .tag-info {{ background: #EAF3FB; color: {AZUL_INCAUCA}; }}
-
-        .provicheck-footer {{
-            margin-top: 2.4rem;
-            padding: 1rem 1.2rem;
-            border-top: 1px solid {COLOR_BORDE};
-            color: {COLOR_TEXTO_SUAVE};
-            text-align: center;
-            font-size: 0.84rem;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    .tag-ok,.tag-warn,.tag-danger,.tag-info {{ display:inline-block; padding:.25rem .64rem; border-radius:999px; font-size:.78rem; font-weight:800; }}
+    .tag-ok {{ background:#DCFCE7; color:#166534; }}
+    .tag-warn {{ background:#FEF3C7; color:#92400E; }}
+    .tag-danger {{ background:#FEE2E2; color:#991B1B; }}
+    .tag-info {{ background:#EAF3FF; color:{AZUL_INCAUCA}; }}
+    .provicheck-footer {{ margin-top:2rem; padding:.9rem 1rem; border-top:1px solid {COLOR_BORDE}; color:{COLOR_TEXTO_SUAVE}; text-align:center; font-size:.82rem; }}
+    .stAlert {{ border-radius:12px!important; }}
+    [data-testid="stDataFrame"] {{ border:1px solid {COLOR_BORDE}; border-radius:12px; overflow:hidden; }}
+    </style>
+    ''', unsafe_allow_html=True)
 
 
 def encabezado():
-    nombre = html.escape(str(APP_NAME))
-    subtitulo = html.escape(str(APP_SUBTITLE))
-    version = html.escape(str(VERSION))
+    st.markdown(f'''
+    <div class="main-header">
+        <h1>🛡️ {html.escape(str(APP_NAME))} · {html.escape(str(VERSION))}</h1>
+        <p>{html.escape(str(APP_SUBTITLE))}</p>
+        <p><strong>Confiabilidad metrológica para decisiones seguras.</strong></p>
+    </div>
+    ''', unsafe_allow_html=True)
 
-    st.markdown(
-        f"""
-        <div class="main-header">
-            <h1>{nombre}</h1>
-            <p>{subtitulo} · {version}</p>
-            <p><strong>Confiabilidad metrológica para decisiones seguras.</strong></p>
+
+def sidebar_pro():
+    usuario = html.escape(str(st.session_state.get('usuario', '')))
+    rol = html.escape(str(st.session_state.get('rol', 'Administrador')))
+    with st.sidebar:
+        st.markdown(f'''
+        <div class="sidebar-brand">
+            <div class="sidebar-brand-title">🛡️ PROVICHECK</div>
+            <div class="sidebar-brand-subtitle">Enterprise · {html.escape(str(VERSION))}</div>
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+        ''', unsafe_allow_html=True)
+        st.page_link('app.py', label='🏠 Dashboard')
+        st.page_link('pages/01_Equipos.py', label='🧪 Equipos')
+        st.page_link('pages/02_Hoja_de_Vida.py', label='📘 Hoja de Vida')
+        st.page_link('pages/03_Administracion.py', label='⚙️ Administración')
+        st.page_link('pages/04_Verificaciones.py', label='✅ Verificaciones')
+        st.divider()
+        st.markdown(f'''
+        <div class="sidebar-user">
+            <strong>👤 Usuario: {usuario or 'sin sesión'}</strong><br>
+            <span>Rol: {rol}</span><br><span>🟢 En línea</span>
+        </div>
+        ''', unsafe_allow_html=True)
+        st.divider()
+        if st.button('↪ Cerrar sesión', width='stretch'):
+            st.session_state['autenticado'] = False
+            st.rerun()
 
 
 def login_limpio():
     with st.container(border=True):
-        st.markdown("### 🔐 Ingreso al sistema")
-        usuario = st.text_input("Usuario")
-        clave = st.text_input("Contraseña", type="password")
-        entrar = st.button("Ingresar a PROVICHECK", width="stretch")
-
+        st.markdown('### 🔐 Ingreso al sistema')
+        usuario = st.text_input('Usuario')
+        clave = st.text_input('Contraseña', type='password')
+        entrar = st.button('Ingresar a PROVICHECK', width='stretch')
         if entrar:
             if usuario.strip() and clave.strip():
-                st.session_state["autenticado"] = True
-                st.session_state["usuario"] = usuario.strip()
+                st.session_state['autenticado'] = True
+                st.session_state['usuario'] = usuario.strip()
+                st.session_state.setdefault('rol', 'Administrador')
                 st.rerun()
             else:
-                st.warning("Ingrese usuario y contraseña.")
+                st.warning('Ingrese usuario y contraseña.')
 
 
 def estado_class(estado: str):
     texto = str(estado).strip().lower()
-
-    if any(x in texto for x in ["fuera", "inactivo", "baja", "no conforme", "no cumple"]):
-        return "tag-danger"
-
-    if any(x in texto for x in ["mant", "calibr", "observ", "incompleta", "pendiente", "no evaluado"]):
-        return "tag-warn"
-
-    if any(x in texto for x in ["activo", "operativo", "disponible", "conforme", "cumple"]):
-        return "tag-ok"
-
-    return "tag-info"
+    if any(x in texto for x in ['fuera','inactivo','baja','no conforme','no cumple']): return 'tag-danger'
+    if any(x in texto for x in ['mant','calibr','observ','incompleta','pendiente','no evaluado']): return 'tag-warn'
+    if any(x in texto for x in ['activo','operativo','disponible','conforme','cumple']): return 'tag-ok'
+    return 'tag-info'
 
 
 def tarjeta_equipo(equipo: dict):
@@ -193,20 +166,15 @@ def tarjeta_equipo(equipo: dict):
 
 
 def tarjeta_equipo_html(equipo: dict):
-    codigo = html.escape(str(equipo.get("codigo_equipo", "Sin código")))
-    nombre = html.escape(str(equipo.get("nombre_equipo", "Equipo sin nombre")))
-    laboratorio = html.escape(str(equipo.get("laboratorio", "Sin laboratorio")))
-    ubicacion = html.escape(str(equipo.get("ubicacion", "Sin ubicación")))
-    estado = html.escape(str(equipo.get("estado", "Sin estado")))
-    responsable = html.escape(str(equipo.get("responsable", "Sin responsable")))
-    criticidad = html.escape(str(equipo.get("criticidad", "Sin criticidad")))
-    marca = html.escape(str(equipo.get("marca", "Sin marca")))
-    modelo = html.escape(str(equipo.get("modelo", "Sin modelo")))
-    tipo = html.escape(str(equipo.get("tipo_equipo", "Sin tipo")))
-
-    return f"""
+    e = {k: html.escape(str(v)) for k,v in equipo.items()}
+    codigo=e.get('codigo_equipo','Sin código'); nombre=e.get('nombre_equipo','Equipo sin nombre')
+    laboratorio=e.get('laboratorio','Sin laboratorio'); ubicacion=e.get('ubicacion','Sin ubicación')
+    estado=e.get('estado','Sin estado'); responsable=e.get('responsable','Sin responsable')
+    criticidad=e.get('criticidad','Sin criticidad'); marca=e.get('marca','Sin marca')
+    modelo=e.get('modelo','Sin modelo'); tipo=e.get('tipo_equipo','Sin tipo')
+    return f'''
     <div class="equipment-card">
-        <div style="font-size: 2.1rem;">⚖️</div>
+        <div style="font-size:1.9rem;">⚖️</div>
         <div class="equipment-code">{codigo}</div>
         <div class="equipment-name">{nombre}</div>
         <div class="equipment-line">🏭 <strong>Laboratorio:</strong> {laboratorio}</div>
@@ -216,20 +184,10 @@ def tarjeta_equipo_html(equipo: dict):
         <div class="equipment-line">👤 <strong>Responsable:</strong> {responsable}</div>
         <div class="equipment-line">⚠️ <strong>Criticidad:</strong> {criticidad}</div>
         <p><span class="{estado_class(estado)}">{estado}</span></p>
-    </div>
-    """
+    </div>'''
 
 
 def pie_pagina():
-    version = html.escape(str(VERSION))
-
-    st.markdown(
-        f"""
-        <div class="provicheck-footer">
-            <strong>PROVICHECK Enterprise</strong>
-            · Gestión inteligente de equipos de laboratorio
-            · {version}
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(f'''
+    <div class="provicheck-footer"><strong>PROVICHECK Enterprise</strong> · Gestión inteligente de equipos de laboratorio · {html.escape(str(VERSION))}</div>
+    ''', unsafe_allow_html=True)

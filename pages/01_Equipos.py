@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-from utils.ui import aplicar_estilo, encabezado, tarjeta_equipo_html
+from utils.ui import aplicar_estilo, encabezado, tarjeta_equipo_html, sidebar_pro
 from utils.data import cargar_hoja
 
 st.set_page_config(
@@ -11,6 +11,12 @@ st.set_page_config(
 )
 
 aplicar_estilo()
+
+if not st.session_state.get('autenticado', False):
+    st.warning('Inicie sesión desde la página principal.')
+    st.stop()
+
+sidebar_pro()
 encabezado()
 
 st.title("🧪 Equipos PRO")
@@ -27,9 +33,9 @@ total_labs = equipos["laboratorio"].nunique() if "laboratorio" in equipos.column
 total_estados = equipos["estado"].nunique() if "estado" in equipos.columns else 0
 
 m1, m2, m3 = st.columns(3)
-m1.metric("Equipos registrados", total_equipos)
-m2.metric("Laboratorios", total_labs)
-m3.metric("Estados", total_estados)
+m1.metric("🧪 Equipos registrados", total_equipos)
+m2.metric("🏭 Laboratorios", total_labs)
+m3.metric("🛡️ Estados", total_estados)
 
 st.divider()
 

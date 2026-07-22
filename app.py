@@ -4,7 +4,7 @@ import plotly.express as px
 
 from config import APP_NAME, VERSION
 from database import crear_base_datos
-from utils.ui import aplicar_estilo, encabezado, login_limpio, pie_pagina
+from utils.ui import aplicar_estilo, encabezado, login_limpio, pie_pagina, sidebar_pro
 from utils.dashboard import (
     obtener_kpis,
     obtener_estado_verificaciones,
@@ -48,25 +48,7 @@ if not st.session_state["autenticado"]:
     st.stop()
 
 
-with st.sidebar:
-    st.title("PROVICHECK")
-    st.caption(f"Enterprise · {VERSION}")
-    st.write(f"Usuario: **{st.session_state.get('usuario', '')}**")
-
-    st.divider()
-
-    st.page_link("app.py", label="🏠 Dashboard")
-    st.page_link("pages/01_Equipos.py", label="🧪 Equipos")
-    st.page_link("pages/02_Hoja_de_Vida.py", label="📘 Hoja de Vida")
-    st.page_link("pages/03_Administracion.py", label="⚙️ Administración")
-    st.page_link("pages/04_Verificaciones.py", label="✅ Verificaciones")
-
-    st.divider()
-
-    if st.button("Cerrar sesión", width="stretch"):
-        st.session_state["autenticado"] = False
-        st.rerun()
-
+sidebar_pro()
 
 encabezado()
 
@@ -85,13 +67,13 @@ tendencia_mensual = obtener_tendencia_mensual()
 ranking_equipos = obtener_ranking_equipos(8)
 
 
-st.subheader("Centro de control")
+st.markdown("## Centro de control")
 
 col_salud, col_estado = st.columns([1, 1.7])
 
 with col_salud:
     with st.container(border=True):
-        st.markdown("### 🧪 Salud del laboratorio")
+        st.markdown("### 💓 Salud del laboratorio")
         st.metric(
             "Índice general",
             f'{indice_salud["indice"]:.1f} %',
@@ -119,24 +101,24 @@ with col_estado:
 c1, c2, c3, c4 = st.columns(4)
 
 c1.metric(
-    "Equipos registrados",
+    "🧪 Equipos registrados",
     kpis["equipos"],
     delta=f'{kpis["activos"]} activos',
 )
 
 c2.metric(
-    "Verificaciones",
+    "📋 Verificaciones",
     kpis["verificaciones"],
     delta=f'{kpis["conformes"]} conformes',
 )
 
 c3.metric(
-    "Conformidad",
+    "🛡️ Conformidad",
     f'{kpis["porcentaje_conformidad"]:.1f} %',
 )
 
 c4.metric(
-    "Alertas",
+    "🔔 Alertas",
     kpis["alertas"],
     delta=(
         f'{kpis["no_conformes"]} no conformes · '
@@ -148,10 +130,10 @@ c4.metric(
 st.markdown("### Semáforo de programación")
 s1, s2, s3, s4, s5 = st.columns(5)
 
-s1.metric("🟢 Vigentes", resumen_programacion["vigentes"])
+s1.metric("🟢 Al día", resumen_programacion["vigentes"])
 s2.metric("🟡 Próximas", resumen_programacion["proximas"])
 s3.metric("🔴 Vencidas", resumen_programacion["vencidas"])
-s4.metric("🔴 Sin verificar", resumen_programacion["sin_verificar"])
+s4.metric("🔵 Sin verificar", resumen_programacion["sin_verificar"])
 s5.metric("⚪ Sin frecuencia", resumen_programacion["sin_frecuencia"])
 
 st.divider()

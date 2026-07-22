@@ -1,7 +1,7 @@
 from datetime import datetime
 import streamlit as st
 
-from utils.ui import aplicar_estilo, encabezado
+from utils.ui import aplicar_estilo, encabezado, sidebar_pro
 from utils.data import cargar_hoja
 from utils.formatos import formatear_numero
 from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
@@ -19,6 +19,12 @@ st.set_page_config(
 )
 
 aplicar_estilo()
+
+if not st.session_state.get('autenticado', False):
+    st.warning('Inicie sesión desde la página principal.')
+    st.stop()
+
+sidebar_pro()
 encabezado()
 
 st.title("✅ Motor Inteligente de Verificación")
@@ -67,10 +73,11 @@ equipo_info = equipos[
 
 st.divider()
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Equipo", equipo_info.get("codigo_equipo", ""))
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Código", equipo_info.get("codigo_equipo", ""))
 c2.metric("Estado", equipo_info.get("estado", ""))
 c3.metric("Responsable", equipo_info.get("responsable", ""))
+c4.metric("Laboratorio", equipo_info.get("laboratorio", ""))
 
 st.divider()
 
@@ -92,17 +99,20 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
     with columnas[i % tarjetas_por_fila]:
         with st.container(border=True):
-            st.markdown(f"### 📌 {punto['punto_verificacion']} {unidad}")
+            st.markdown(
+                f'''<div class="verification-card-title"><span class="verification-card-badge">📌</span><span>{punto['punto_verificacion']} {unidad}</span></div>''',
+                unsafe_allow_html=True,
+            )
             st.caption(punto["nombre_chequeo"])
 
             resultado = st.number_input(
-                "Resultado observado",
+                "Valor observado",
                 key=f"resultado_{codigo_equipo}_{punto['id_punto']}_{i}",
                 format=f"%.{DECIMALES}f",
             )
 
             observacion_tipo = st.selectbox(
-                "Observación",
+                "Novedades",
                 OPCIONES_OBSERVACION,
                 key=f"obs_tipo_{codigo_equipo}_{punto['id_punto']}_{i}",
             )
