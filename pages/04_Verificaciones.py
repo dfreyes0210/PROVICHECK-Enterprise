@@ -1,7 +1,13 @@
 from datetime import datetime
+
 import streamlit as st
 
-from utils.ui import aplicar_estilo, encabezado, sidebar_pro
+from utils.ui import (
+    aplicar_estilo,
+    encabezado,
+    pie_pagina,
+    sidebar_pro,
+)
 from utils.data import cargar_hoja
 from utils.formatos import formatear_numero
 from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
@@ -16,21 +22,23 @@ st.set_page_config(
     page_title="Verificaciones - PROVICHECK",
     page_icon="✅",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 
 aplicar_estilo()
 
-if not st.session_state.get('autenticado', False):
-    st.warning('Inicie sesión desde la página principal.')
+if not st.session_state.get("autenticado", False):
+    st.warning("La sesión no está activa. Ingrese nuevamente desde el Dashboard.")
+    st.page_link("app.py", label="🔐 Ir al inicio de sesión")
     st.stop()
 
 sidebar_pro()
 encabezado()
 
-st.title("✅ Motor Inteligente de Verificación")
+st.markdown("## ✅ Motor inteligente de verificación")
 st.caption(
-    "Ingrese resultados observados, registre observaciones "
-    "y guarde la sesión completa en SQLite."
+    "Registre los resultados observados, documente novedades y guarde "
+    "la sesión completa en la base de datos SQLite."
 )
 
 DECIMALES = 4
@@ -58,26 +66,78 @@ if puntos.empty:
     st.error("No se encontró la hoja Puntos_Verificacion.")
     st.stop()
 
+equipos = equipos.copy()
+equipos.columns = [str(columna).strip() for columna in equipos.columns]
+
+puntos = puntos.copy()
+puntos.columns = [str(columna).strip() for columna in puntos.columns]
+
+columnas_requeridas = {"codigo_equipo", "nombre_equipo"}
+faltantes = columnas_requeridas.difference(equipos.columns)
+
+if faltantes:
+    st.error(
+        "La hoja Equipos no contiene las columnas requeridas: "
+        + ", ".join(sorted(faltantes))
+    )
+    st.stop()
+
 equipos["descripcion"] = (
-    equipos["codigo_equipo"].astype(str)
+    equipos["codigo_equipo"].astype(str).str.strip()
     + " · "
-    + equipos["nombre_equipo"].astype(str)
+    + equipos["nombre_equipo"].astype(str).str.strip()
 )
 
-equipo_sel = st.selectbox("Seleccione equipo", equipos["descripcion"].tolist())
-codigo_equipo = equipo_sel.split(" · ")[0]
+st.markdown("### 1. Selección del equipo")
 
-equipo_info = equipos[
-    equipos["codigo_equipo"].astype(str) == str(codigo_equipo)
-].iloc[0].to_dict()
+col_equipo, col_vista = st.columns([3, 1])
 
-st.divider()
+with col_equipo:
+    equipo_sel = st.selectbox(
+        "Seleccione el equipo que desea verificar",
+        equipos["descripcion"].tolist(),
+    )
+
+with col_vista:
+    tarjetas_por_fila = st.selectbox(
+        "Tarjetas por fila",
+        [2, 1, 3],
+        index=0,
+    )
+
+codigo_equipo = equipo_sel.split(" · ", 1)[0].strip()
+
+coincidencias = equipos[
+    equipos["codigo_equipo"].astype(str).str.strip() == codigo_equipo
+]
+
+if coincidencias.empty:
+    st.error("No fue posible localizar la información del equipo seleccionado.")
+    st.stop()
+
+equipo_info = coincidencias.iloc[0].to_dict()
+
+st.markdown("### 2. Identificación del equipo")
 
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Código", equipo_info.get("codigo_equipo", ""))
-c2.metric("Estado", equipo_info.get("estado", ""))
-c3.metric("Responsable", equipo_info.get("responsable", ""))
-c4.metric("Laboratorio", equipo_info.get("laboratorio", ""))
+c2.metric("Estado", equipo_info.get("estado", "Sin estado"))
+c3.metric("Laboratorio", equipo_info.get("laboratorio", "Sin laboratorio"))
+c4.metric("Responsable", equipo_info.get("responsable", "Sin responsable"))
+
+with st.container(border=True):
+    col_a, col_b, col_c = st.columns(3)
+    col_a.write(
+        f"**Equipo:** {equipo_info.get('nombre_equipo', 'Sin nombre')}"
+    )
+    col_b.write(
+        f"**Marca / Modelo:** "
+        f"{equipo_info.get('marca', 'Sin marca')} · "
+        f"{equipo_info.get('modelo', 'Sin modelo')}"
+    )
+    col_c.write(
+        f"**Ubicación:** {equipo_info.get('ubicacion', 'Sin ubicación')}"
+    )
 
 st.divider()
 
@@ -85,107 +145,161 @@ puntos_equipo = obtener_puntos_equipo(puntos, codigo_equipo)
 
 if puntos_equipo.empty:
     st.warning("Este equipo no tiene puntos de verificación configurados.")
+    pie_pagina()
     st.stop()
 
-st.subheader("Puntos de verificación")
+st.markdown("### 3. Puntos de verificación")
+st.caption(
+    f"El equipo tiene {len(puntos_equipo)} punto(s) configurado(s). "
+    "Cada resultado se evalúa automáticamente frente a sus límites."
+)
 
 registros = []
-tarjetas_por_fila = 2
 columnas = st.columns(tarjetas_por_fila)
 
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     punto = preparar_punto_para_verificacion(fila.to_dict())
-    unidad = punto.get("unidad", "")
+    unidad = str(punto.get("unidad", "") or "").strip()
+    id_punto = punto.get("id_punto", i)
+    nombre_punto = punto.get("punto_verificacion", f"Punto {i + 1}")
+    nombre_chequeo = punto.get("nombre_chequeo", "Chequeo sin nombre")
+
+    decimales_punto = punto.get("decimales", DECIMALES)
+    try:
+        decimales_punto = int(decimales_punto)
+    except (TypeError, ValueError):
+        decimales_punto = DECIMALES
+
+    decimales_punto = max(0, min(decimales_punto, 8))
 
     with columnas[i % tarjetas_por_fila]:
         with st.container(border=True):
             st.markdown(
-                f'''<div class="verification-card-title"><span class="verification-card-badge">📌</span><span>{punto['punto_verificacion']} {unidad}</span></div>''',
+                f'''
+                <div class="verification-card-title">
+                    <span class="verification-card-badge">📌</span>
+                    <span>{nombre_punto} {unidad}</span>
+                </div>
+                ''',
                 unsafe_allow_html=True,
             )
-            st.caption(punto["nombre_chequeo"])
+            st.caption(nombre_chequeo)
+
+            valor_nominal = punto.get("valor_nominal")
+            limite_inferior = punto.get("limite_inferior")
+            limite_superior = punto.get("limite_superior")
+
+            d1, d2, d3 = st.columns(3)
+            d1.metric(
+                "Patrón",
+                f"{formatear_numero(valor_nominal, decimales_punto)} {unidad}",
+            )
+            d2.metric(
+                "Límite inferior",
+                f"{formatear_numero(limite_inferior, decimales_punto)} {unidad}",
+            )
+            d3.metric(
+                "Límite superior",
+                f"{formatear_numero(limite_superior, decimales_punto)} {unidad}",
+            )
 
             resultado = st.number_input(
-                "Valor observado",
-                key=f"resultado_{codigo_equipo}_{punto['id_punto']}_{i}",
-                format=f"%.{DECIMALES}f",
+                "Resultado observado",
+                key=f"resultado_{codigo_equipo}_{id_punto}_{i}",
+                format=f"%.{decimales_punto}f",
             )
 
             observacion_tipo = st.selectbox(
-                "Novedades",
+                "Observación",
                 OPCIONES_OBSERVACION,
-                key=f"obs_tipo_{codigo_equipo}_{punto['id_punto']}_{i}",
+                key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
             )
 
             observacion_texto = ""
             if observacion_tipo == "Otro":
                 observacion_texto = st.text_area(
-                    "Detalle de observación",
-                    key=f"obs_txt_{codigo_equipo}_{punto['id_punto']}_{i}",
+                    "Detalle de la observación",
+                    key=f"obs_txt_{codigo_equipo}_{id_punto}_{i}",
+                    placeholder="Describa la novedad encontrada.",
                 )
 
             observacion_final = (
-                observacion_texto if observacion_tipo == "Otro" else observacion_tipo
+                observacion_texto.strip()
+                if observacion_tipo == "Otro"
+                else observacion_tipo
             )
 
             evaluacion = evaluar_resultado(
                 resultado,
-                punto["valor_nominal"],
-                punto["limite_inferior"],
-                punto["limite_superior"],
+                valor_nominal,
+                limite_inferior,
+                limite_superior,
             )
 
             st.write(
-                f"**Valor nominal:** "
-                f"{formatear_numero(punto['valor_nominal'], DECIMALES)} {unidad}"
+                f"**Error calculado:** "
+                f"{formatear_numero(evaluacion.get('error'), decimales_punto)} "
+                f"{unidad}"
             )
             st.write(
-                f"**Error:** "
-                f"{formatear_numero(evaluacion['error'], DECIMALES)} {unidad}"
-            )
-            st.write(
-                f"**Límites reales:** "
-                f"{formatear_numero(evaluacion['limite_inferior_real'], DECIMALES)} "
-                f"a {formatear_numero(evaluacion['limite_superior_real'], DECIMALES)} {unidad}"
+                f"**Intervalo real:** "
+                f"{formatear_numero(evaluacion.get('limite_inferior_real'), decimales_punto)} "
+                f"a "
+                f"{formatear_numero(evaluacion.get('limite_superior_real'), decimales_punto)} "
+                f"{unidad}"
             )
 
             if observacion_tipo != "Sin novedades":
                 estado_punto = "No evaluado"
-                st.warning("🟡 NO EVALUADO")
-            elif evaluacion["cumple"] is True:
+                st.warning("🟡 NO EVALUADO · Existe una novedad registrada")
+            elif evaluacion.get("cumple") is True:
                 estado_punto = "Cumple"
                 st.success("🟢 CUMPLE")
-            elif evaluacion["cumple"] is False:
+            elif evaluacion.get("cumple") is False:
                 estado_punto = "No cumple"
                 st.error("🔴 NO CUMPLE")
             else:
                 estado_punto = "No evaluado"
-                st.warning("🟡 SIN EVALUACIÓN / SIN LÍMITES")
+                st.warning("🟡 SIN EVALUACIÓN O SIN LÍMITES")
 
             registros.append(
                 {
                     "codigo_equipo": codigo_equipo,
-                    "punto": punto.get("punto_verificacion", ""),
-                    "nombre_chequeo": punto.get("nombre_chequeo", ""),
-                    "valor_nominal": punto.get("valor_nominal", None),
+                    "punto": nombre_punto,
+                    "nombre_chequeo": nombre_chequeo,
+                    "valor_nominal": valor_nominal,
                     "resultado": resultado,
-                    "error": evaluacion.get("error", None),
-                    "limite_inferior": evaluacion.get("limite_inferior_real", None),
-                    "limite_superior": evaluacion.get("limite_superior_real", None),
+                    "error": evaluacion.get("error"),
+                    "limite_inferior": evaluacion.get(
+                        "limite_inferior_real"
+                    ),
+                    "limite_superior": evaluacion.get(
+                        "limite_superior_real"
+                    ),
                     "estado_punto": estado_punto,
                     "observacion": observacion_final,
                 }
             )
 
 st.divider()
+st.markdown("### 4. Resumen de la sesión")
 
 total = len(registros)
-cumplen = sum(1 for r in registros if r["estado_punto"] == "Cumple")
-no_cumplen = sum(1 for r in registros if r["estado_punto"] == "No cumple")
-no_evaluados = sum(1 for r in registros if r["estado_punto"] == "No evaluado")
+cumplen = sum(
+    1 for registro in registros
+    if registro["estado_punto"] == "Cumple"
+)
+no_cumplen = sum(
+    1 for registro in registros
+    if registro["estado_punto"] == "No cumple"
+)
+no_evaluados = sum(
+    1 for registro in registros
+    if registro["estado_punto"] == "No evaluado"
+)
 
 r1, r2, r3, r4 = st.columns(4)
-r1.metric("Puntos", total)
+r1.metric("Puntos configurados", total)
 r2.metric("Cumplen", cumplen)
 r3.metric("No cumplen", no_cumplen)
 r4.metric("No evaluados", no_evaluados)
@@ -205,13 +319,30 @@ diagnostico = generar_diagnostico_sesion(
     no_evaluados,
 )
 
-st.markdown(f"### Estado de la sesión: **{estado_sesion}**")
+if estado_sesion == "Conforme":
+    st.success("### 🟢 Estado de la sesión: CONFORME")
+elif estado_sesion == "No conforme":
+    st.error("### 🔴 Estado de la sesión: NO CONFORME")
+else:
+    st.warning("### 🟡 Estado de la sesión: INCOMPLETA")
 
 with st.container(border=True):
     st.markdown("### 🧠 Diagnóstico automático")
     st.write(diagnostico)
 
-if st.button("💾 Guardar Verificación en SQLite", use_container_width=True):
+st.markdown("### 5. Guardar verificación")
+
+confirmar = st.checkbox(
+    "Confirmo que revisé los resultados y las observaciones registradas."
+)
+
+guardar = st.button(
+    "💾 Guardar verificación en SQLite",
+    width="stretch",
+    disabled=not confirmar,
+)
+
+if guardar:
     id_sesion = generar_id_sesion(codigo_equipo)
     fecha_hora = datetime.now()
 
@@ -238,19 +369,23 @@ if st.button("💾 Guardar Verificación en SQLite", use_container_width=True):
         with st.container(border=True):
             st.markdown("## ✅ Sesión finalizada")
             st.write(f"**Sesión:** {id_sesion}")
-            st.write(f"**Equipo:** {codigo_equipo} · {equipo_info.get('nombre_equipo', '')}")
+            st.write(
+                f"**Equipo:** {codigo_equipo} · "
+                f"{equipo_info.get('nombre_equipo', '')}"
+            )
             st.write(f"**Fecha:** {sesion['fecha']} {sesion['hora']}")
             st.write(f"**Responsable:** {sesion['responsable']}")
             st.write(f"**Estado general:** {estado_sesion}")
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Puntos", total)
-            c2.metric("Cumplen", cumplen)
-            c3.metric("No cumplen", no_cumplen)
-            c4.metric("No evaluados", no_evaluados)
+            f1, f2, f3, f4 = st.columns(4)
+            f1.metric("Puntos", total)
+            f2.metric("Cumplen", cumplen)
+            f3.metric("No cumplen", no_cumplen)
+            f4.metric("No evaluados", no_evaluados)
 
             st.markdown("### 🧠 Diagnóstico")
             st.write(diagnostico)
-
     else:
         st.error(mensaje)
+
+pie_pagina()
