@@ -72,6 +72,20 @@ equipos.columns = [str(columna).strip() for columna in equipos.columns]
 puntos = puntos.copy()
 puntos.columns = [str(columna).strip() for columna in puntos.columns]
 
+# Normaliza los nombres de las columnas de la hoja maestra.
+# En PROVICHECK_Base_Datos los límites y el valor nominal están
+# identificados con el sufijo "_g".
+alias_columnas = {
+    "limite_inferior_g": "limite_inferior",
+    "valor_nominal_g": "valor_nominal",
+    "limite_superior_g": "limite_superior",
+    "desviacion_aceptada_g": "desviacion_aceptada",
+}
+
+for columna_origen, columna_destino in alias_columnas.items():
+    if columna_origen in puntos.columns and columna_destino not in puntos.columns:
+        puntos[columna_destino] = puntos[columna_origen]
+
 columnas_requeridas = {"codigo_equipo", "nombre_equipo"}
 faltantes = columnas_requeridas.difference(equipos.columns)
 
