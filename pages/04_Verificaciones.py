@@ -43,6 +43,68 @@ st.caption(
 
 DECIMALES = 4
 
+
+def numero_seguro(valor):
+    """Convierte valores de Excel/SQLite a float sin generar errores."""
+    try:
+        if valor is None or str(valor).strip() == "":
+            return None
+        numero = float(valor)
+        if numero != numero:
+            return None
+        return numero
+    except (TypeError, ValueError):
+        return None
+
+
+def obtener_limites_reales(fila_original, punto_preparado):
+    """
+    Obtiene límites absolutos.
+
+    Prioridad:
+    1. limite_inferior_g / limite_superior_g de la fuente.
+    2. limite_inferior / limite_superior de la fuente.
+    3. valor nominal ± desviacion_aceptada_g.
+    """
+    nominal = numero_seguro(
+        fila_original.get(
+            "valor_nominal_g",
+            fila_original.get(
+                "valor_nominal",
+                punto_preparado.get("valor_nominal"),
+            ),
+        )
+    )
+
+    limite_inferior = numero_seguro(
+        fila_original.get(
+            "limite_inferior_g",
+            fila_original.get("limite_inferior"),
+        )
+    )
+    limite_superior = numero_seguro(
+        fila_original.get(
+            "limite_superior_g",
+            fila_original.get("limite_superior"),
+        )
+    )
+
+    desviacion = numero_seguro(
+        fila_original.get(
+            "desviacion_aceptada_g",
+            fila_original.get("desviacion_aceptada"),
+        )
+    )
+
+    if nominal is not None and desviacion is not None:
+        if limite_inferior is None:
+            limite_inferior = nominal - desviacion
+        if limite_superior is None:
+            limite_superior = nominal + desviacion
+
+    return nominal, limite_inferior, limite_superior
+
+
 OPCIONES_OBSERVACION = [
     "Sin novedades",
     "Patrón en calibración",
@@ -172,7 +234,8 @@ registros = []
 columnas = st.columns(tarjetas_por_fila)
 
 for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
-    punto = preparar_punto_para_verificacion(fila.to_dict())
+    fila_original = fila.to_dict()
+    punto = preparar_punto_para_verificacion(fila_original)
     unidad = str(punto.get("unidad", "") or "").strip()
     id_punto = punto.get("id_punto", i)
     nombre_punto = punto.get("punto_verificacion", f"Punto {i + 1}")
@@ -199,9 +262,11 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
             )
             st.caption(nombre_chequeo)
 
-            valor_nominal = punto.get("valor_nominal")
-            limite_inferior = punto.get("limite_inferior")
-            limite_superior = punto.get("limite_superior")
+            (
+                valor_nominal,
+                limite_inferior,
+                limite_superior,
+            ) = obtener_limites_reales(fila_original, punto)
 
             d1, d2, d3 = st.columns(3)
             d1.metric(
@@ -243,12 +308,30 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 else observacion_tipo
             )
 
-            evaluacion = evaluar_resultado(
-                resultado,
-                valor_nominal,
-                limite_inferior,
-                limite_superior,
+            resultado_num = numero_seguro(resultado)
+            error_calculado = (
+                resultado_num - valor_nominal
+                if resultado_num is not None and valor_nominal is not None
+                else None
             )
+
+            if (
+                resultado_num is not None
+                and limite_inferior is not None
+                and limite_superior is not None
+            ):
+                cumple_calculado = (
+                    limite_inferior <= resultado_num <= limite_superior
+                )
+            else:
+                cumple_calculado = None
+
+            evaluacion = {
+                "error": error_calculado,
+                "limite_inferior_real": limite_inferior,
+                "limite_superior_real": limite_superior,
+                "cumple": cumple_calculado,
+            }
 
             st.write(
                 f"**Error calculado:** "
