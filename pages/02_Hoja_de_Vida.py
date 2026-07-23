@@ -489,77 +489,478 @@ with tabs[4]:
             )
 
 with tabs[5]:
-    st.markdown("### Biblioteca documental")
-    st.caption("Carga, consulta y descarga de documentos asociados al equipo.")
+    st.markdown("### 📂 Biblioteca técnica del equipo")
+    st.caption(
+        "Gestión centralizada de certificados, manuales, procedimientos, "
+        "informes, fotografías y demás soportes asociados al equipo."
+    )
 
-    with st.expander("➕ Cargar nuevo documento", expanded=documentos.empty):
-        with st.form(f"form_documento_{codigo}", clear_on_submit=True):
-            d1, d2 = st.columns(2)
-            with d1:
-                tipo_documento = st.selectbox("Tipo de documento *", ["Certificado de calibración","Certificado de verificación","Manual","Procedimiento","Ficha técnica","Fotografía","Mantenimiento","Calificación","Otro"])
-                titulo_documento = st.text_input("Título", placeholder="Ej.: Certificado de calibración 2026")
-                archivo_documento = st.file_uploader("Seleccionar archivo *", type=["pdf","png","jpg","jpeg","webp","doc","docx","xls","xlsx","csv","txt"])
-                responsable_documento = st.text_input("Responsable", value=str(st.session_state.get("usuario", "")))
-            with d2:
-                fecha_emision_documento = st.date_input("Fecha de emisión", value=None)
-                tiene_vencimiento = st.checkbox("Tiene fecha de vencimiento")
-                fecha_vencimiento_documento = st.date_input("Fecha de vencimiento") if tiene_vencimiento else None
-                proveedor_documento = st.text_input("Proveedor o emisor")
-                version_documento = st.text_input("Versión")
-                observaciones_documento = st.text_area("Observaciones")
-            guardar_documento = st.form_submit_button("💾 Guardar documento", type="primary", width="stretch")
+    documentos = consultar_documentos_equipo(codigo)
+
+    total_documentos = len(documentos)
+    vigentes = (
+        int((documentos["estado"] == "Vigente").sum())
+        if not documentos.empty and "estado" in documentos.columns
+        else 0
+    )
+    proximos = (
+        int((documentos["estado"] == "Próximo a vencer").sum())
+        if not documentos.empty and "estado" in documentos.columns
+        else 0
+    )
+    vencidos = (
+        int((documentos["estado"] == "Vencido").sum())
+        if not documentos.empty and "estado" in documentos.columns
+        else 0
+    )
+    sin_vencimiento = (
+        int((documentos["estado"] == "Sin vencimiento").sum())
+        if not documentos.empty and "estado" in documentos.columns
+        else 0
+    )
+
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("Total", total_documentos)
+    m2.metric("🟢 Vigentes", vigentes)
+    m3.metric("🟡 Próximos", proximos)
+    m4.metric("🔴 Vencidos", vencidos)
+    m5.metric("🔵 Sin vencimiento", sin_vencimiento)
+
+    st.divider()
+
+    with st.expander(
+        "➕ Registrar nuevo documento",
+        expanded=documentos.empty,
+    ):
+        with st.form(
+            f"form_documento_{codigo}",
+            clear_on_submit=True,
+        ):
+            c1, c2 = st.columns(2)
+
+            with c1:
+                tipo_documento = st.selectbox(
+                    "Tipo de documento *",
+                    [
+                        "Certificado de calibración",
+                        "Certificado de verificación",
+                        "Certificado de mantenimiento",
+                        "Manual del fabricante",
+                        "Procedimiento",
+                        "Instructivo",
+                        "Ficha técnica",
+                        "Hoja de seguridad",
+                        "Informe técnico",
+                        "Fotografía",
+                        "Registro de auditoría",
+                        "Calificación",
+                        "Otro",
+                    ],
+                )
+
+                titulo_documento = st.text_input(
+                    "Título",
+                    placeholder="Ej.: Certificado de calibración 2026",
+                )
+
+                archivo_documento = st.file_uploader(
+                    "Seleccionar archivo *",
+                    type=[
+                        "pdf",
+                        "png",
+                        "jpg",
+                        "jpeg",
+                        "webp",
+                        "doc",
+                        "docx",
+                        "xls",
+                        "xlsx",
+                        "csv",
+                        "txt",
+                        "zip",
+                    ],
+                    help="Tamaño recomendado máximo: 20 MB.",
+                )
+
+                responsable_documento = st.text_input(
+                    "Responsable",
+                    value=str(st.session_state.get("usuario", "")),
+                )
+
+                proveedor_documento = st.text_input(
+                    "Proveedor o emisor",
+                )
+
+            with c2:
+                registrar_emision = st.checkbox(
+                    "Registrar fecha de emisión",
+                    value=True,
+                )
+
+                fecha_emision_documento = (
+                    st.date_input(
+                        "Fecha de emisión",
+                        value=None,
+                    )
+                    if registrar_emision
+                    else None
+                )
+
+                tiene_vencimiento = st.checkbox(
+                    "Tiene fecha de vencimiento",
+                )
+
+                fecha_vencimiento_documento = (
+                    st.date_input(
+                        "Fecha de vencimiento",
+                        value=None,
+                    )
+                    if tiene_vencimiento
+                    else None
+                )
+
+                version_documento = st.text_input(
+                    "Versión",
+                    placeholder="Ej.: 01",
+                )
+
+                observaciones_documento = st.text_area(
+                    "Observaciones",
+                    placeholder=(
+                        "Alcance, restricciones, número de certificado "
+                        "o información complementaria."
+                    ),
+                )
+
+            guardar_documento = st.form_submit_button(
+                "💾 Guardar documento",
+                type="primary",
+                width="stretch",
+            )
 
         if guardar_documento:
             if archivo_documento is None:
                 st.error("Debe seleccionar un archivo.")
-            elif tiene_vencimiento and fecha_emision_documento and fecha_vencimiento_documento < fecha_emision_documento:
-                st.error("La fecha de vencimiento no puede ser anterior a la fecha de emisión.")
+
+            elif (
+                tiene_vencimiento
+                and fecha_emision_documento
+                and fecha_vencimiento_documento
+                and fecha_vencimiento_documento
+                < fecha_emision_documento
+            ):
+                st.error(
+                    "La fecha de vencimiento no puede ser anterior "
+                    "a la fecha de emisión."
+                )
+
+            elif tiene_vencimiento and fecha_vencimiento_documento is None:
+                st.error(
+                    "Debe seleccionar la fecha de vencimiento."
+                )
+
             else:
                 try:
-                    registrar_documento(codigo, tipo_documento, archivo_documento, titulo_documento, fecha_emision_documento, fecha_vencimiento_documento, responsable_documento, proveedor_documento, version_documento, observaciones_documento)
-                    st.success("Documento cargado correctamente.")
+                    registrar_documento(
+                        codigo,
+                        tipo_documento,
+                        archivo_documento,
+                        titulo_documento,
+                        fecha_emision_documento,
+                        fecha_vencimiento_documento,
+                        responsable_documento,
+                        proveedor_documento,
+                        version_documento,
+                        observaciones_documento,
+                    )
+
+                    st.success(
+                        "Documento registrado correctamente."
+                    )
                     st.rerun()
+
                 except Exception as exc:
-                    st.error(f"No fue posible guardar el documento: {exc}")
+                    st.error(
+                        "No fue posible guardar el documento. "
+                        f"Detalle: {exc}"
+                    )
+
+    st.markdown("### 🔎 Consulta documental")
 
     documentos = consultar_documentos_equipo(codigo)
+
     if documentos.empty:
         st.info(
-            "Este equipo aún no tiene documentos registrados en la base de datos activa. "
-            "Los documentos cargados antes de una actualización o reinicio de Streamlit "
-            "Cloud pueden desaparecer porque el almacenamiento local de la aplicación "
-            "no es permanente."
+            "Este equipo todavía no tiene documentos registrados."
         )
+
     else:
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total", len(documentos))
-        m2.metric("🟢 Vigentes", int((documentos["estado"] == "Vigente").sum()))
-        m3.metric("🟡 Próximos", int((documentos["estado"] == "Próximo a vencer").sum()))
-        m4.metric("🔴 Vencidos", int((documentos["estado"] == "Vencido").sum()))
-        for _, documento in documentos.iterrows():
-            estado_doc = str(documento.get("estado", "Sin estado"))
-            icono = {"Vigente":"🟢","Próximo a vencer":"🟡","Vencido":"🔴","Sin vencimiento":"⚪"}.get(estado_doc,"⚪")
-            with st.container(border=True):
-                c_info, c_acciones = st.columns([3,1])
-                with c_info:
-                    st.markdown(f"#### {icono} {documento.get('titulo') or documento.get('nombre_archivo')}")
-                    st.write(f"**Tipo:** {documento.get('tipo_documento','')}")
-                    st.write(f"**Archivo:** {documento.get('nombre_archivo','')}")
-                    if documento.get('fecha_vencimiento'):
-                        st.caption(f"Vence: {documento.get('fecha_vencimiento')}")
-                    if documento.get('observaciones'):
-                        st.write(f"**Observaciones:** {documento.get('observaciones')}")
-                with c_acciones:
-                    st.metric("Estado", estado_doc)
-                    try:
-                        st.download_button("⬇️ Descargar", data=leer_documento(documento.get('ruta_archivo')), file_name=documento.get('nombre_archivo'), mime=documento.get('mime_type') or 'application/octet-stream', key=f"descargar_doc_{documento.get('id')}", width="stretch")
-                    except FileNotFoundError:
-                        st.error("Archivo no disponible.")
-                    confirmar = st.checkbox("Confirmar eliminación", key=f"confirmar_doc_{documento.get('id')}")
-                    if st.button("🗑️ Eliminar", key=f"eliminar_doc_{documento.get('id')}", disabled=not confirmar, width="stretch"):
-                        eliminar_documento(documento.get('id'))
-                        st.success("Documento eliminado.")
-                        st.rerun()
+        f1, f2, f3 = st.columns(3)
+
+        tipos_disponibles = sorted(
+            documentos["tipo_documento"]
+            .fillna("")
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        estados_disponibles = sorted(
+            documentos["estado"]
+            .fillna("")
+            .astype(str)
+            .unique()
+            .tolist()
+        )
+
+        with f1:
+            filtro_tipo = st.selectbox(
+                "Tipo",
+                ["Todos"] + tipos_disponibles,
+                key=f"filtro_tipo_doc_{codigo}",
+            )
+
+        with f2:
+            filtro_estado = st.selectbox(
+                "Estado",
+                ["Todos"] + estados_disponibles,
+                key=f"filtro_estado_doc_{codigo}",
+            )
+
+        with f3:
+            texto_busqueda = st.text_input(
+                "Buscar",
+                placeholder="Título, archivo, proveedor...",
+                key=f"buscar_doc_{codigo}",
+            )
+
+        documentos_filtrados = documentos.copy()
+
+        if filtro_tipo != "Todos":
+            documentos_filtrados = documentos_filtrados[
+                documentos_filtrados["tipo_documento"]
+                == filtro_tipo
+            ]
+
+        if filtro_estado != "Todos":
+            documentos_filtrados = documentos_filtrados[
+                documentos_filtrados["estado"]
+                == filtro_estado
+            ]
+
+        if texto_busqueda.strip():
+            patron = texto_busqueda.strip().lower()
+            mascara = pd.Series(
+                False,
+                index=documentos_filtrados.index,
+            )
+
+            for columna in [
+                "titulo",
+                "nombre_archivo",
+                "proveedor",
+                "responsable",
+                "version",
+                "observaciones",
+            ]:
+                if columna in documentos_filtrados.columns:
+                    mascara = mascara | (
+                        documentos_filtrados[columna]
+                        .fillna("")
+                        .astype(str)
+                        .str.lower()
+                        .str.contains(
+                            patron,
+                            regex=False,
+                        )
+                    )
+
+            documentos_filtrados = documentos_filtrados[
+                mascara
+            ]
+
+        st.caption(
+            f"Mostrando {len(documentos_filtrados)} "
+            f"de {len(documentos)} documentos."
+        )
+
+        if documentos_filtrados.empty:
+            st.warning(
+                "No hay documentos que coincidan con los filtros."
+            )
+
+        else:
+            for _, documento in documentos_filtrados.iterrows():
+                estado_doc = str(
+                    documento.get("estado", "Sin estado")
+                )
+
+                icono = {
+                    "Vigente": "🟢",
+                    "Próximo a vencer": "🟡",
+                    "Vencido": "🔴",
+                    "Sin vencimiento": "🔵",
+                    "Fecha inválida": "⚫",
+                }.get(estado_doc, "⚪")
+
+                titulo_doc = (
+                    documento.get("titulo")
+                    or documento.get("nombre_archivo")
+                    or "Documento sin título"
+                )
+
+                with st.container(border=True):
+                    i1, i2 = st.columns([4, 1])
+
+                    with i1:
+                        st.markdown(
+                            f"#### {icono} {titulo_doc}"
+                        )
+                        st.caption(
+                            str(
+                                documento.get(
+                                    "nombre_archivo",
+                                    "",
+                                )
+                            )
+                        )
+
+                    with i2:
+                        st.metric(
+                            "Estado",
+                            estado_doc,
+                        )
+
+                    d1, d2, d3, d4 = st.columns(4)
+
+                    d1.markdown(
+                        "**Tipo**  \n"
+                        f"{documento.get('tipo_documento') or '—'}"
+                    )
+                    d2.markdown(
+                        "**Emisión**  \n"
+                        f"{documento.get('fecha_emision') or '—'}"
+                    )
+                    d3.markdown(
+                        "**Vencimiento**  \n"
+                        f"{documento.get('fecha_vencimiento') or 'No aplica'}"
+                    )
+                    d4.markdown(
+                        "**Versión**  \n"
+                        f"{documento.get('version') or '—'}"
+                    )
+
+                    proveedor_doc = (
+                        documento.get("proveedor")
+                        or "No informado"
+                    )
+                    responsable_doc = (
+                        documento.get("responsable")
+                        or "No informado"
+                    )
+
+                    st.caption(
+                        f"Proveedor o emisor: {proveedor_doc} · "
+                        f"Responsable: {responsable_doc}"
+                    )
+
+                    observaciones_doc = str(
+                        documento.get("observaciones") or ""
+                    ).strip()
+
+                    if observaciones_doc:
+                        with st.expander(
+                            "Ver observaciones",
+                        ):
+                            st.write(observaciones_doc)
+
+                    a1, a2, a3 = st.columns([1.2, 1.2, 3])
+
+                    with a1:
+                        try:
+                            contenido_documento = leer_documento(
+                                documento.get("ruta_archivo")
+                            )
+
+                            st.download_button(
+                                "⬇️ Descargar",
+                                data=contenido_documento,
+                                file_name=documento.get(
+                                    "nombre_archivo"
+                                ),
+                                mime=(
+                                    documento.get("mime_type")
+                                    or "application/octet-stream"
+                                ),
+                                key=(
+                                    "descargar_doc_"
+                                    f"{documento.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+
+                        except FileNotFoundError:
+                            st.button(
+                                "Archivo no disponible",
+                                disabled=True,
+                                key=(
+                                    "archivo_no_disponible_"
+                                    f"{documento.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+
+                    with a2:
+                        confirmar_eliminacion = st.checkbox(
+                            "Confirmar eliminación",
+                            key=(
+                                "confirmar_doc_"
+                                f"{documento.get('id')}"
+                            ),
+                        )
+
+                        if st.button(
+                            "🗑️ Eliminar",
+                            key=(
+                                "eliminar_doc_"
+                                f"{documento.get('id')}"
+                            ),
+                            disabled=not confirmar_eliminacion,
+                            width="stretch",
+                        ):
+                            try:
+                                eliminar_documento(
+                                    documento.get("id"),
+                                    usuario=str(
+                                        st.session_state.get(
+                                            "usuario",
+                                            "",
+                                        )
+                                    ),
+                                )
+
+                                st.success(
+                                    "Documento eliminado."
+                                )
+                                st.rerun()
+
+                            except Exception as exc:
+                                st.error(
+                                    "No fue posible eliminar "
+                                    f"el documento: {exc}"
+                                )
+
+                    with a3:
+                        try:
+                            leer_documento(
+                                documento.get("ruta_archivo")
+                            )
+                        except FileNotFoundError:
+                            st.warning(
+                                "El registro existe en SQLite, pero "
+                                "el archivo físico no está disponible "
+                                "en este despliegue."
+                            )
 
 with tabs[6]:
     st.markdown("### Auditoría")
