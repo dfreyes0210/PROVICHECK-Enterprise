@@ -12,6 +12,15 @@ from utils.documentos import (
     leer_documento,
     registrar_documento,
 )
+from utils.calibraciones import (
+    ESTADOS_RESULTADO,
+    TIPOS_CALIBRACION,
+    dias_para_vencimiento,
+    eliminar_calibracion,
+    listar_calibraciones,
+    registrar_calibracion,
+    resumen_calibraciones,
+)
 from utils.sqlite_consultas import (
     consultar_ultima_verificacion,
     consultar_historial_equipo,
@@ -304,6 +313,7 @@ tabs = st.tabs(
         "📜 Historial",
         "📝 Bitácora",
         "📈 Tendencias",
+        "🧭 Calibraciones",
         "📂 Documentos",
         "🔍 Auditoría",
     ]
@@ -489,6 +499,510 @@ with tabs[4]:
             )
 
 with tabs[5]:
+    st.markdown("### 🧭 Gestión de calibraciones")
+    st.caption(
+        "Registro técnico, vigencia, trazabilidad metrológica "
+        "y consulta histórica de las calibraciones del equipo."
+    )
+
+    resumen_cal = resumen_calibraciones(codigo)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Total", resumen_cal["total"])
+    c2.metric("🟢 Vigentes", resumen_cal["vigentes"])
+    c3.metric("🟡 Próximas", resumen_cal["proximas"])
+    c4.metric("🔴 Vencidas", resumen_cal["vencidas"])
+    c5.metric(
+        "Días para próxima",
+        resumen_cal["dias_restantes"]
+        if resumen_cal["dias_restantes"] is not None
+        else "—",
+    )
+
+    calibraciones = listar_calibraciones(codigo)
+
+    if resumen_cal["vencidas"] > 0:
+        st.error(
+            f"Este equipo tiene {resumen_cal['vencidas']} "
+            "calibración(es) vencida(s)."
+        )
+    elif resumen_cal["proximas"] > 0:
+        st.warning(
+            f"Este equipo tiene {resumen_cal['proximas']} "
+            "calibración(es) próxima(s) a vencer."
+        )
+    elif resumen_cal["vigentes"] > 0:
+        st.success(
+            "La calibración vigente del equipo se encuentra "
+            "dentro del periodo establecido."
+        )
+
+    st.divider()
+
+    with st.expander(
+        "➕ Registrar calibración",
+        expanded=calibraciones.empty,
+    ):
+        documentos_cal = consultar_documentos_equipo(codigo)
+        opciones_documento = {"Sin documento asociado": None}
+
+        if not documentos_cal.empty:
+            for _, doc in documentos_cal.iterrows():
+                etiqueta = (
+                    f"{doc.get('tipo_documento', 'Documento')} · "
+                    f"{doc.get('nombre_archivo', '')}"
+                )
+                opciones_documento[etiqueta] = int(doc.get("id"))
+
+        with st.form(
+            f"form_calibracion_{codigo}",
+            clear_on_submit=True,
+        ):
+            f1, f2 = st.columns(2)
+
+            with f1:
+                tipo_calibracion = st.selectbox(
+                    "Tipo de calibración *",
+                    TIPOS_CALIBRACION,
+                )
+                numero_certificado = st.text_input(
+                    "Número de certificado",
+                    placeholder="Ej.: CAL-2026-014",
+                )
+                laboratorio_calibracion = st.text_input(
+                    "Laboratorio que realizó la calibración",
+                )
+                laboratorio_acreditado = st.checkbox(
+                    "Laboratorio acreditado",
+                )
+                organismo_acreditador = st.text_input(
+                    "Organismo acreditador",
+                    placeholder="Ej.: ONAC",
+                    disabled=not laboratorio_acreditado,
+                )
+                alcance_acreditado = st.text_input(
+                    "Alcance acreditado",
+                    disabled=not laboratorio_acreditado,
+                )
+                responsable_calibracion = st.text_input(
+                    "Responsable",
+                    value=str(
+                        st.session_state.get(
+                            "usuario",
+                            responsable,
+                        )
+                    ),
+                )
+
+            with f2:
+                fecha_calibracion = st.date_input(
+                    "Fecha de calibración *",
+                    value=None,
+                )
+                tiene_proxima = st.checkbox(
+                    "Registrar próxima calibración",
+                    value=True,
+                )
+                fecha_proxima_calibracion = (
+                    st.date_input(
+                        "Fecha de próxima calibración",
+                        value=None,
+                    )
+                    if tiene_proxima
+                    else None
+                )
+                frecuencia_meses = st.number_input(
+                    "Frecuencia (meses)",
+                    min_value=0,
+                    max_value=120,
+                    value=12,
+                    step=1,
+                )
+                resultado_calibracion = st.selectbox(
+                    "Resultado *",
+                    ESTADOS_RESULTADO,
+                )
+                incertidumbre = st.text_input(
+                    "Incertidumbre reportada",
+                    placeholder="Ej.: ±0,002 g",
+                )
+                factor_cobertura = st.text_input(
+                    "Factor de cobertura",
+                    placeholder="Ej.: k = 2",
+                )
+
+            st.markdown("#### Trazabilidad metrológica")
+            t1, t2, t3, t4 = st.columns(4)
+
+            with t1:
+                patron_utilizado = st.text_input(
+                    "Patrón utilizado",
+                )
+            with t2:
+                codigo_patron = st.text_input(
+                    "Código del patrón",
+                )
+            with t3:
+                certificado_patron = st.text_input(
+                    "Certificado del patrón",
+                )
+            with t4:
+                registrar_vencimiento_patron = st.checkbox(
+                    "Patrón con vencimiento",
+                )
+                vencimiento_patron = (
+                    st.date_input(
+                        "Vencimiento del patrón",
+                        value=None,
+                    )
+                    if registrar_vencimiento_patron
+                    else None
+                )
+
+            documento_asociado = st.selectbox(
+                "Certificado asociado en la Biblioteca Técnica",
+                list(opciones_documento.keys()),
+            )
+            observaciones_calibracion = st.text_area(
+                "Observaciones",
+                placeholder=(
+                    "Condiciones, restricciones, puntos fuera de "
+                    "tolerancia o acciones derivadas."
+                ),
+            )
+            guardar_calibracion = st.form_submit_button(
+                "💾 Guardar calibración",
+                type="primary",
+                width="stretch",
+            )
+
+        if guardar_calibracion:
+            if fecha_calibracion is None:
+                st.error(
+                    "Debe seleccionar la fecha de calibración."
+                )
+            elif (
+                tiene_proxima
+                and fecha_proxima_calibracion is None
+            ):
+                st.error(
+                    "Debe seleccionar la fecha de próxima calibración."
+                )
+            elif (
+                fecha_calibracion
+                and fecha_proxima_calibracion
+                and fecha_proxima_calibracion
+                < fecha_calibracion
+            ):
+                st.error(
+                    "La próxima calibración no puede ser anterior "
+                    "a la fecha de calibración."
+                )
+            else:
+                try:
+                    registrar_calibracion(
+                        codigo_equipo=codigo,
+                        tipo_calibracion=tipo_calibracion,
+                        numero_certificado=numero_certificado,
+                        laboratorio_calibracion=(
+                            laboratorio_calibracion
+                        ),
+                        laboratorio_acreditado=(
+                            laboratorio_acreditado
+                        ),
+                        organismo_acreditador=(
+                            organismo_acreditador
+                        ),
+                        alcance_acreditado=alcance_acreditado,
+                        responsable=responsable_calibracion,
+                        fecha_calibracion=fecha_calibracion,
+                        fecha_proxima_calibracion=(
+                            fecha_proxima_calibracion
+                        ),
+                        frecuencia_meses=frecuencia_meses,
+                        resultado=resultado_calibracion,
+                        incertidumbre=incertidumbre,
+                        factor_cobertura=factor_cobertura,
+                        patron_utilizado=patron_utilizado,
+                        codigo_patron=codigo_patron,
+                        certificado_patron=certificado_patron,
+                        vencimiento_patron=vencimiento_patron,
+                        documento_id=opciones_documento[
+                            documento_asociado
+                        ],
+                        observaciones=observaciones_calibracion,
+                        usuario_registro=str(
+                            st.session_state.get(
+                                "usuario",
+                                responsable_calibracion,
+                            )
+                        ),
+                    )
+                    st.success(
+                        "Calibración registrada correctamente."
+                    )
+                    st.rerun()
+                except Exception as exc:
+                    st.error(
+                        "No fue posible guardar la calibración. "
+                        f"Detalle: {exc}"
+                    )
+
+    st.markdown("### 📋 Historial de calibraciones")
+    calibraciones = listar_calibraciones(codigo)
+
+    if calibraciones.empty:
+        st.info(
+            "Este equipo todavía no tiene calibraciones registradas."
+        )
+    else:
+        q1, q2 = st.columns(2)
+
+        with q1:
+            filtro_estado_cal = st.selectbox(
+                "Filtrar por estado",
+                [
+                    "Todos",
+                    "Vigente",
+                    "Próxima a vencer",
+                    "Vencida",
+                    "Sin vencimiento",
+                ],
+                key=f"filtro_estado_cal_{codigo}",
+            )
+
+        with q2:
+            filtro_resultado_cal = st.selectbox(
+                "Filtrar por resultado",
+                ["Todos"] + ESTADOS_RESULTADO,
+                key=f"filtro_resultado_cal_{codigo}",
+            )
+
+        calibraciones_filtradas = calibraciones.copy()
+
+        if filtro_estado_cal != "Todos":
+            calibraciones_filtradas = calibraciones_filtradas[
+                calibraciones_filtradas["estado"]
+                == filtro_estado_cal
+            ]
+
+        if filtro_resultado_cal != "Todos":
+            calibraciones_filtradas = calibraciones_filtradas[
+                calibraciones_filtradas["resultado"]
+                == filtro_resultado_cal
+            ]
+
+        st.caption(
+            f"Mostrando {len(calibraciones_filtradas)} "
+            f"de {len(calibraciones)} calibraciones."
+        )
+
+        for _, calibracion in calibraciones_filtradas.iterrows():
+            estado_cal = str(
+                calibracion.get("estado", "Sin estado")
+            )
+
+            icono_cal = {
+                "Vigente": "🟢",
+                "Próxima a vencer": "🟡",
+                "Vencida": "🔴",
+                "Sin vencimiento": "🔵",
+            }.get(estado_cal, "⚪")
+
+            certificado = (
+                calibracion.get("numero_certificado")
+                or "Sin número de certificado"
+            )
+
+            with st.container(border=True):
+                h1, h2 = st.columns([4, 1])
+
+                with h1:
+                    st.markdown(
+                        f"#### {icono_cal} {certificado}"
+                    )
+                    st.caption(
+                        f"{calibracion.get('tipo_calibracion', '')} · "
+                        f"{calibracion.get('laboratorio_calibracion') or 'Laboratorio no informado'}"
+                    )
+
+                with h2:
+                    st.metric("Estado", estado_cal)
+
+                r1, r2, r3, r4 = st.columns(4)
+                r1.markdown(
+                    "**Fecha calibración**  \n"
+                    f"{calibracion.get('fecha_calibracion') or '—'}"
+                )
+                r2.markdown(
+                    "**Próxima calibración**  \n"
+                    f"{calibracion.get('fecha_proxima_calibracion') or 'No aplica'}"
+                )
+                r3.markdown(
+                    "**Resultado**  \n"
+                    f"{calibracion.get('resultado') or '—'}"
+                )
+                dias_cal = dias_para_vencimiento(
+                    calibracion.get(
+                        "fecha_proxima_calibracion"
+                    )
+                )
+                r4.markdown(
+                    "**Días restantes**  \n"
+                    f"{dias_cal if dias_cal is not None else '—'}"
+                )
+
+                with st.expander("Ver detalle técnico"):
+                    d1, d2 = st.columns(2)
+
+                    with d1:
+                        acreditado = (
+                            "Sí"
+                            if int(
+                                calibracion.get(
+                                    "laboratorio_acreditado",
+                                    0,
+                                )
+                            )
+                            else "No"
+                        )
+                        st.write(f"**Acreditado:** {acreditado}")
+                        st.write(
+                            "**Organismo acreditador:** "
+                            f"{calibracion.get('organismo_acreditador') or '—'}"
+                        )
+                        st.write(
+                            "**Alcance acreditado:** "
+                            f"{calibracion.get('alcance_acreditado') or '—'}"
+                        )
+                        st.write(
+                            "**Incertidumbre:** "
+                            f"{calibracion.get('incertidumbre') or '—'}"
+                        )
+                        st.write(
+                            "**Factor de cobertura:** "
+                            f"{calibracion.get('factor_cobertura') or '—'}"
+                        )
+
+                    with d2:
+                        st.write(
+                            "**Patrón utilizado:** "
+                            f"{calibracion.get('patron_utilizado') or '—'}"
+                        )
+                        st.write(
+                            "**Código patrón:** "
+                            f"{calibracion.get('codigo_patron') or '—'}"
+                        )
+                        st.write(
+                            "**Certificado patrón:** "
+                            f"{calibracion.get('certificado_patron') or '—'}"
+                        )
+                        st.write(
+                            "**Vencimiento patrón:** "
+                            f"{calibracion.get('vencimiento_patron') or '—'}"
+                        )
+                        st.write(
+                            "**Responsable:** "
+                            f"{calibracion.get('responsable') or '—'}"
+                        )
+
+                    observacion_cal = (
+                        calibracion.get("observaciones") or ""
+                    )
+                    if observacion_cal:
+                        st.markdown("**Observaciones**")
+                        st.write(observacion_cal)
+
+                b1, b2, b3 = st.columns([1.2, 1.2, 3])
+
+                with b1:
+                    ruta_documento = calibracion.get(
+                        "documento_ruta"
+                    )
+
+                    if ruta_documento:
+                        try:
+                            contenido_certificado = leer_documento(
+                                ruta_documento
+                            )
+                            st.download_button(
+                                "⬇️ Certificado",
+                                data=contenido_certificado,
+                                file_name=calibracion.get(
+                                    "documento_nombre"
+                                )
+                                or certificado,
+                                mime=(
+                                    calibracion.get("documento_mime")
+                                    or "application/octet-stream"
+                                ),
+                                key=(
+                                    "descargar_cal_"
+                                    f"{calibracion.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+                        except FileNotFoundError:
+                            st.button(
+                                "Certificado no disponible",
+                                disabled=True,
+                                key=(
+                                    "cal_sin_archivo_"
+                                    f"{calibracion.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+                    else:
+                        st.button(
+                            "Sin certificado asociado",
+                            disabled=True,
+                            key=(
+                                "cal_sin_doc_"
+                                f"{calibracion.get('id')}"
+                            ),
+                            width="stretch",
+                        )
+
+                with b2:
+                    confirmar_cal = st.checkbox(
+                        "Confirmar eliminación",
+                        key=(
+                            "confirmar_cal_"
+                            f"{calibracion.get('id')}"
+                        ),
+                    )
+
+                    if st.button(
+                        "🗑️ Eliminar",
+                        key=(
+                            "eliminar_cal_"
+                            f"{calibracion.get('id')}"
+                        ),
+                        disabled=not confirmar_cal,
+                        width="stretch",
+                    ):
+                        try:
+                            eliminar_calibracion(
+                                calibracion.get("id"),
+                                usuario=str(
+                                    st.session_state.get(
+                                        "usuario",
+                                        "",
+                                    )
+                                ),
+                            )
+                            st.success(
+                                "Calibración eliminada."
+                            )
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(
+                                "No fue posible eliminar "
+                                f"la calibración: {exc}"
+                            )
+
+
+with tabs[6]:
     st.markdown("### 📂 Biblioteca técnica del equipo")
     st.caption(
         "Gestión centralizada de certificados, manuales, procedimientos, "
@@ -962,6 +1476,6 @@ with tabs[5]:
                                 "en este despliegue."
                             )
 
-with tabs[6]:
+with tabs[7]:
     st.markdown("### Auditoría")
     st.info("Aquí se mostrará el historial de cambios y trazabilidad del equipo.")
