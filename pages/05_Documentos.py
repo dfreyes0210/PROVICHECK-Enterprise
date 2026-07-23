@@ -8,13 +8,17 @@ import streamlit as st
 
 from database import get_connection
 from utils.documentos import (
-    actualizar_estados_documentos,
-    eliminar_documento,
-    leer_documento,
-    listar_documentos,
-    registrar_documento,
-    resumen_documentos,
-)
+        actualizar_estados_documentos,
+        eliminar_documento,
+        leer_documento,
+        listar_documentos,
+        registrar_documento,
+        resumen_documentos,
+    )
+except Exception as e:
+    import traceback
+    st.error(traceback.format_exc())
+    st.stop()
 
 st.set_page_config(
     page_title="Documentos | PROVICHECK",
