@@ -1,18 +1,14 @@
-import os
 import sqlite3
-
-print("Ruta actual:")
-print(os.getcwd())
-
-print("\n¿Existe data/provicheck.db?")
-print(os.path.exists("data/provicheck.db"))
 
 conn = sqlite3.connect("data/provicheck.db")
 
 cur = conn.cursor()
 
-cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
-print("\nTablas encontradas:")
-print(cur.fetchall())
+print("COLUMNAS documentos_equipo\n")
+
+cur.execute("PRAGMA table_info(documentos_equipo)")
+
+for c in cur.fetchall():
+    print(c)
 
 conn.close()
