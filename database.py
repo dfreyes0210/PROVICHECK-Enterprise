@@ -164,6 +164,62 @@ def crear_base_datos():
             """
         )
 
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mantenimientos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigo_equipo TEXT NOT NULL,
+                tipo_mantenimiento TEXT NOT NULL,
+                estado_mantenimiento TEXT NOT NULL,
+                fecha_inicio TEXT NOT NULL,
+                hora_inicio TEXT,
+                fecha_fin TEXT,
+                hora_fin TEXT,
+                realizado_por_tipo TEXT,
+                responsable TEXT,
+                proveedor TEXT,
+                numero_orden TEXT,
+                descripcion TEXT NOT NULL,
+                causa TEXT,
+                accion_realizada TEXT,
+                resultado TEXT,
+                componente TEXT,
+                marca_componente TEXT,
+                modelo_componente TEXT,
+                serie_componente TEXT,
+                cantidad INTEGER DEFAULT 1,
+                costo_repuesto REAL DEFAULT 0,
+                costo_mano_obra REAL DEFAULT 0,
+                costo_otros REAL DEFAULT 0,
+                costo_total REAL DEFAULT 0,
+                horas_fuera_servicio REAL DEFAULT 0,
+                documento_id INTEGER,
+                observaciones TEXT,
+                fecha_registro TEXT NOT NULL,
+                hora_registro TEXT NOT NULL,
+                usuario_registro TEXT,
+                activo INTEGER DEFAULT 1,
+                FOREIGN KEY (documento_id)
+                    REFERENCES documentos_equipo(id)
+            )
+            """
+        )
+
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mantenimientos_equipo
+            ON mantenimientos(codigo_equipo)
+            """
+        )
+
+        cur.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_mantenimientos_fecha
+            ON mantenimientos(fecha_inicio)
+            """
+        )
+
         conn.commit()
 
     except Exception:
