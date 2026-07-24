@@ -21,6 +21,16 @@ from utils.calibraciones import (
     registrar_calibracion,
     resumen_calibraciones,
 )
+from utils.mantenimientos import (
+    ESTADOS_MANTENIMIENTO,
+    RESULTADOS_MANTENIMIENTO,
+    TIPOS_EJECUTOR,
+    TIPOS_MANTENIMIENTO,
+    eliminar_mantenimiento,
+    listar_mantenimientos,
+    registrar_mantenimiento,
+    resumen_mantenimientos,
+)
 from utils.sqlite_consultas import (
     consultar_ultima_verificacion,
     consultar_historial_equipo,
@@ -314,6 +324,7 @@ tabs = st.tabs(
         "📝 Bitácora",
         "📈 Tendencias",
         "🧭 Calibraciones",
+        "🔧 Mantenimientos",
         "📂 Documentos",
         "🔍 Auditoría",
     ]
@@ -1003,6 +1014,547 @@ with tabs[5]:
 
 
 with tabs[6]:
+    st.markdown("### 🔧 Gestión de mantenimientos")
+    st.caption(
+        "Registro de intervenciones preventivas, correctivas, "
+        "cambios de componentes, traslados y demás novedades técnicas."
+    )
+
+    resumen_mant = resumen_mantenimientos(codigo)
+
+    mt1, mt2, mt3, mt4, mt5, mt6 = st.columns(6)
+    mt1.metric("Total", resumen_mant["total"])
+    mt2.metric("Preventivos", resumen_mant["preventivos"])
+    mt3.metric("Correctivos", resumen_mant["correctivos"])
+    mt4.metric(
+        "Costo acumulado",
+        f"$ {resumen_mant['costo_total']:,.0f}",
+    )
+    mt5.metric(
+        "Horas fuera de servicio",
+        f"{resumen_mant['horas_fuera_servicio']:.2f}",
+    )
+    mt6.metric(
+        "Último mantenimiento",
+        resumen_mant["ultimo_mantenimiento"] or "—",
+    )
+
+    mantenimientos = listar_mantenimientos(codigo)
+
+    st.divider()
+
+    with st.expander(
+        "➕ Registrar mantenimiento o novedad técnica",
+        expanded=mantenimientos.empty,
+    ):
+        documentos_mant = consultar_documentos_equipo(codigo)
+        opciones_doc_mant = {"Sin documento asociado": None}
+
+        if not documentos_mant.empty:
+            for _, doc in documentos_mant.iterrows():
+                etiqueta_doc = (
+                    f"{doc.get('tipo_documento', 'Documento')} · "
+                    f"{doc.get('nombre_archivo', '')}"
+                )
+                opciones_doc_mant[etiqueta_doc] = int(
+                    doc.get("id")
+                )
+
+        with st.form(
+            f"form_mantenimiento_{codigo}",
+            clear_on_submit=True,
+        ):
+            ma1, ma2 = st.columns(2)
+
+            with ma1:
+                tipo_mantenimiento = st.selectbox(
+                    "Tipo de mantenimiento *",
+                    TIPOS_MANTENIMIENTO,
+                )
+                estado_mantenimiento = st.selectbox(
+                    "Estado *",
+                    ESTADOS_MANTENIMIENTO,
+                    index=2,
+                )
+                fecha_inicio_mant = st.date_input(
+                    "Fecha de inicio *",
+                    value=None,
+                )
+                hora_inicio_mant = st.time_input(
+                    "Hora de inicio",
+                    value=None,
+                )
+                registrar_fin_mant = st.checkbox(
+                    "Registrar finalización",
+                    value=True,
+                )
+                fecha_fin_mant = (
+                    st.date_input(
+                        "Fecha de finalización",
+                        value=None,
+                    )
+                    if registrar_fin_mant
+                    else None
+                )
+                hora_fin_mant = (
+                    st.time_input(
+                        "Hora de finalización",
+                        value=None,
+                    )
+                    if registrar_fin_mant
+                    else None
+                )
+
+            with ma2:
+                realizado_por_tipo = st.selectbox(
+                    "Ejecutor",
+                    TIPOS_EJECUTOR,
+                )
+                responsable_mant = st.text_input(
+                    "Responsable",
+                    value=str(
+                        st.session_state.get(
+                            "usuario",
+                            responsable,
+                        )
+                    ),
+                )
+                proveedor_mant = st.text_input(
+                    "Proveedor o empresa",
+                    disabled=(
+                        realizado_por_tipo
+                        != "Proveedor externo"
+                    ),
+                )
+                numero_orden_mant = st.text_input(
+                    "Orden de trabajo o servicio",
+                )
+                resultado_mant = st.selectbox(
+                    "Resultado",
+                    RESULTADOS_MANTENIMIENTO,
+                )
+
+            st.markdown("#### Trabajo realizado")
+
+            descripcion_mant = st.text_area(
+                "Descripción del mantenimiento *",
+                placeholder=(
+                    "Ej.: Cambio de lámpara de deuterio, "
+                    "cambio de electrodo, traslado de ubicación..."
+                ),
+            )
+
+            tr1, tr2 = st.columns(2)
+
+            with tr1:
+                causa_mant = st.text_area(
+                    "Causa o motivo",
+                )
+
+            with tr2:
+                accion_realizada_mant = st.text_area(
+                    "Acción realizada",
+                )
+
+            st.markdown("#### Componente o repuesto")
+
+            cp1, cp2, cp3, cp4, cp5 = st.columns(5)
+
+            with cp1:
+                componente_mant = st.text_input(
+                    "Componente",
+                    placeholder="Ej.: Electrodo",
+                )
+            with cp2:
+                marca_componente_mant = st.text_input(
+                    "Marca",
+                )
+            with cp3:
+                modelo_componente_mant = st.text_input(
+                    "Modelo / referencia",
+                )
+            with cp4:
+                serie_componente_mant = st.text_input(
+                    "Serie / lote",
+                )
+            with cp5:
+                cantidad_mant = st.number_input(
+                    "Cantidad",
+                    min_value=1,
+                    max_value=999,
+                    value=1,
+                    step=1,
+                )
+
+            st.markdown("#### Costos")
+
+            co1, co2, co3 = st.columns(3)
+
+            with co1:
+                costo_repuesto_mant = st.number_input(
+                    "Costo de repuestos",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1000.0,
+                )
+            with co2:
+                costo_mano_obra_mant = st.number_input(
+                    "Costo de mano de obra",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1000.0,
+                )
+            with co3:
+                costo_otros_mant = st.number_input(
+                    "Otros costos",
+                    min_value=0.0,
+                    value=0.0,
+                    step=1000.0,
+                )
+
+            documento_mant = st.selectbox(
+                "Documento asociado en la Biblioteca Técnica",
+                list(opciones_doc_mant.keys()),
+            )
+
+            observaciones_mant = st.text_area(
+                "Observaciones",
+            )
+
+            guardar_mant = st.form_submit_button(
+                "💾 Guardar mantenimiento",
+                type="primary",
+                width="stretch",
+            )
+
+        if guardar_mant:
+            if fecha_inicio_mant is None:
+                st.error(
+                    "Debe seleccionar la fecha de inicio."
+                )
+            elif not descripcion_mant.strip():
+                st.error(
+                    "Debe describir el mantenimiento."
+                )
+            elif (
+                registrar_fin_mant
+                and fecha_fin_mant is None
+            ):
+                st.error(
+                    "Debe seleccionar la fecha de finalización."
+                )
+            else:
+                try:
+                    registrar_mantenimiento(
+                        codigo_equipo=codigo,
+                        tipo_mantenimiento=tipo_mantenimiento,
+                        estado_mantenimiento=(
+                            estado_mantenimiento
+                        ),
+                        fecha_inicio=fecha_inicio_mant,
+                        hora_inicio=hora_inicio_mant,
+                        fecha_fin=fecha_fin_mant,
+                        hora_fin=hora_fin_mant,
+                        realizado_por_tipo=realizado_por_tipo,
+                        responsable=responsable_mant,
+                        proveedor=proveedor_mant,
+                        numero_orden=numero_orden_mant,
+                        descripcion=descripcion_mant,
+                        causa=causa_mant,
+                        accion_realizada=(
+                            accion_realizada_mant
+                        ),
+                        resultado=resultado_mant,
+                        componente=componente_mant,
+                        marca_componente=(
+                            marca_componente_mant
+                        ),
+                        modelo_componente=(
+                            modelo_componente_mant
+                        ),
+                        serie_componente=(
+                            serie_componente_mant
+                        ),
+                        cantidad=cantidad_mant,
+                        costo_repuesto=costo_repuesto_mant,
+                        costo_mano_obra=(
+                            costo_mano_obra_mant
+                        ),
+                        costo_otros=costo_otros_mant,
+                        documento_id=opciones_doc_mant[
+                            documento_mant
+                        ],
+                        observaciones=observaciones_mant,
+                        usuario_registro=str(
+                            st.session_state.get(
+                                "usuario",
+                                responsable_mant,
+                            )
+                        ),
+                    )
+
+                    st.success(
+                        "Mantenimiento registrado correctamente."
+                    )
+                    st.rerun()
+
+                except Exception as exc:
+                    st.error(
+                        "No fue posible guardar el mantenimiento. "
+                        f"Detalle: {exc}"
+                    )
+
+    st.markdown("### 📋 Historial de mantenimientos")
+
+    mantenimientos = listar_mantenimientos(codigo)
+
+    if mantenimientos.empty:
+        st.info(
+            "Este equipo todavía no tiene mantenimientos "
+            "o novedades técnicas registradas."
+        )
+
+    else:
+        mf1, mf2 = st.columns(2)
+
+        with mf1:
+            filtro_tipo_mant = st.selectbox(
+                "Filtrar por tipo",
+                ["Todos"] + TIPOS_MANTENIMIENTO,
+                key=f"filtro_tipo_mant_{codigo}",
+            )
+
+        with mf2:
+            filtro_estado_mant = st.selectbox(
+                "Filtrar por estado",
+                ["Todos"] + ESTADOS_MANTENIMIENTO,
+                key=f"filtro_estado_mant_{codigo}",
+            )
+
+        mantenimientos_filtrados = mantenimientos.copy()
+
+        if filtro_tipo_mant != "Todos":
+            mantenimientos_filtrados = (
+                mantenimientos_filtrados[
+                    mantenimientos_filtrados[
+                        "tipo_mantenimiento"
+                    ]
+                    == filtro_tipo_mant
+                ]
+            )
+
+        if filtro_estado_mant != "Todos":
+            mantenimientos_filtrados = (
+                mantenimientos_filtrados[
+                    mantenimientos_filtrados[
+                        "estado_mantenimiento"
+                    ]
+                    == filtro_estado_mant
+                ]
+            )
+
+        st.caption(
+            f"Mostrando {len(mantenimientos_filtrados)} "
+            f"de {len(mantenimientos)} registros."
+        )
+
+        for _, mant in mantenimientos_filtrados.iterrows():
+            tipo_mant = str(
+                mant.get("tipo_mantenimiento", "Mantenimiento")
+            )
+            estado_mant = str(
+                mant.get("estado_mantenimiento", "Sin estado")
+            )
+
+            icono_mant = {
+                "Preventivo": "🟢",
+                "Correctivo": "🔴",
+                "Ajuste": "🟡",
+                "Cambio de componente": "🔄",
+                "Traslado": "🚚",
+                "Baja temporal": "🛑",
+                "Baja definitiva": "⚫",
+            }.get(tipo_mant, "🔧")
+
+            with st.container(border=True):
+                mh1, mh2 = st.columns([4, 1])
+
+                with mh1:
+                    st.markdown(
+                        f"#### {icono_mant} {tipo_mant}"
+                    )
+                    st.caption(
+                        f"{mant.get('fecha_inicio') or 'Sin fecha'} · "
+                        f"{mant.get('descripcion') or ''}"
+                    )
+
+                with mh2:
+                    st.metric(
+                        "Estado",
+                        estado_mant,
+                    )
+
+                md1, md2, md3, md4 = st.columns(4)
+
+                md1.markdown(
+                    "**Resultado**  \n"
+                    f"{mant.get('resultado') or '—'}"
+                )
+                md2.markdown(
+                    "**Responsable**  \n"
+                    f"{mant.get('responsable') or '—'}"
+                )
+                md3.markdown(
+                    "**Costo total**  \n"
+                    f"$ {float(mant.get('costo_total') or 0):,.0f}"
+                )
+                md4.markdown(
+                    "**Horas fuera de servicio**  \n"
+                    f"{float(mant.get('horas_fuera_servicio') or 0):.2f}"
+                )
+
+                with st.expander("Ver detalle técnico"):
+                    de1, de2 = st.columns(2)
+
+                    with de1:
+                        st.write(
+                            "**Causa:** "
+                            f"{mant.get('causa') or '—'}"
+                        )
+                        st.write(
+                            "**Acción realizada:** "
+                            f"{mant.get('accion_realizada') or '—'}"
+                        )
+                        st.write(
+                            "**Ejecutor:** "
+                            f"{mant.get('realizado_por_tipo') or '—'}"
+                        )
+                        st.write(
+                            "**Proveedor:** "
+                            f"{mant.get('proveedor') or '—'}"
+                        )
+                        st.write(
+                            "**Orden:** "
+                            f"{mant.get('numero_orden') or '—'}"
+                        )
+
+                    with de2:
+                        st.write(
+                            "**Componente:** "
+                            f"{mant.get('componente') or '—'}"
+                        )
+                        st.write(
+                            "**Marca:** "
+                            f"{mant.get('marca_componente') or '—'}"
+                        )
+                        st.write(
+                            "**Modelo / referencia:** "
+                            f"{mant.get('modelo_componente') or '—'}"
+                        )
+                        st.write(
+                            "**Serie / lote:** "
+                            f"{mant.get('serie_componente') or '—'}"
+                        )
+                        st.write(
+                            "**Cantidad:** "
+                            f"{mant.get('cantidad') or 1}"
+                        )
+
+                    if mant.get("observaciones"):
+                        st.markdown("**Observaciones**")
+                        st.write(mant.get("observaciones"))
+
+                mb1, mb2, mb3 = st.columns([1.2, 1.2, 3])
+
+                with mb1:
+                    ruta_doc_mant = mant.get("documento_ruta")
+
+                    if ruta_doc_mant:
+                        try:
+                            contenido_doc_mant = leer_documento(
+                                ruta_doc_mant
+                            )
+
+                            st.download_button(
+                                "⬇️ Documento",
+                                data=contenido_doc_mant,
+                                file_name=(
+                                    mant.get("documento_nombre")
+                                    or "documento_mantenimiento"
+                                ),
+                                mime=(
+                                    mant.get("documento_mime")
+                                    or "application/octet-stream"
+                                ),
+                                key=(
+                                    "descargar_mant_"
+                                    f"{mant.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+
+                        except FileNotFoundError:
+                            st.button(
+                                "Documento no disponible",
+                                disabled=True,
+                                key=(
+                                    "mant_sin_archivo_"
+                                    f"{mant.get('id')}"
+                                ),
+                                width="stretch",
+                            )
+                    else:
+                        st.button(
+                            "Sin documento asociado",
+                            disabled=True,
+                            key=(
+                                "mant_sin_doc_"
+                                f"{mant.get('id')}"
+                            ),
+                            width="stretch",
+                        )
+
+                with mb2:
+                    confirmar_mant = st.checkbox(
+                        "Confirmar eliminación",
+                        key=(
+                            "confirmar_mant_"
+                            f"{mant.get('id')}"
+                        ),
+                    )
+
+                    if st.button(
+                        "🗑️ Eliminar",
+                        key=(
+                            "eliminar_mant_"
+                            f"{mant.get('id')}"
+                        ),
+                        disabled=not confirmar_mant,
+                        width="stretch",
+                    ):
+                        try:
+                            eliminar_mantenimiento(
+                                mant.get("id"),
+                                usuario=str(
+                                    st.session_state.get(
+                                        "usuario",
+                                        "",
+                                    )
+                                ),
+                            )
+                            st.success(
+                                "Mantenimiento eliminado."
+                            )
+                            st.rerun()
+
+                        except Exception as exc:
+                            st.error(
+                                "No fue posible eliminar "
+                                f"el mantenimiento: {exc}"
+                            )
+
+
+with tabs[7]:
     st.markdown("### 📂 Biblioteca técnica del equipo")
     st.caption(
         "Gestión centralizada de certificados, manuales, procedimientos, "
@@ -1476,6 +2028,6 @@ with tabs[6]:
                                 "en este despliegue."
                             )
 
-with tabs[7]:
+with tabs[8]:
     st.markdown("### Auditoría")
     st.info("Aquí se mostrará el historial de cambios y trazabilidad del equipo.")
