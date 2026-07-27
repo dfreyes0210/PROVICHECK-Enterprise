@@ -52,169 +52,6 @@ aplicar_estilo()
 encabezado()
 
 
-st.markdown(
-    """
-    <style>
-    /* =========================================================
-       PROVICHECK - CORRECCIÓN DE CONTRASTE HOJA DE VIDA
-       ========================================================= */
-
-    /* Texto general de la página */
-    .stApp,
-    .stApp p,
-    .stApp span,
-    .stApp label {
-        color: #0f172a;
-    }
-
-    /* Títulos */
-    h1, h2, h3, h4, h5, h6 {
-        color: #0f172a !important;
-    }
-
-    /* Métricas: etiquetas y valores */
-    div[data-testid="stMetric"] {
-        background: #ffffff !important;
-        border: 1px solid #d7e0da !important;
-        border-top: 3px solid #16743a !important;
-        border-radius: 12px !important;
-        padding: 12px !important;
-    }
-
-    div[data-testid="stMetricLabel"],
-    div[data-testid="stMetricLabel"] p,
-    div[data-testid="stMetricLabel"] span {
-        color: #475569 !important;
-        opacity: 1 !important;
-        font-weight: 600 !important;
-    }
-
-    div[data-testid="stMetricValue"],
-    div[data-testid="stMetricValue"] *,
-    div[data-testid="stMetricDelta"],
-    div[data-testid="stMetricDelta"] * {
-        color: #0f172a !important;
-        opacity: 1 !important;
-    }
-
-    /* Etiquetas de los controles */
-    div[data-testid="stTextInput"] label,
-    div[data-testid="stTextArea"] label,
-    div[data-testid="stSelectbox"] label,
-    div[data-testid="stDateInput"] label,
-    div[data-testid="stFileUploader"] label,
-    div[data-testid="stCheckbox"] label,
-    div[data-testid="stNumberInput"] label {
-        color: #0f172a !important;
-        font-weight: 700 !important;
-        opacity: 1 !important;
-    }
-
-    /* Entradas oscuras: texto visible */
-    div[data-testid="stTextInput"] input,
-    div[data-testid="stTextArea"] textarea,
-    div[data-testid="stDateInput"] input,
-    div[data-testid="stNumberInput"] input {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        opacity: 1 !important;
-    }
-
-    /* Selectbox */
-    div[data-testid="stSelectbox"] div[data-baseweb="select"],
-    div[data-testid="stSelectbox"] div[data-baseweb="select"] * {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-        opacity: 1 !important;
-    }
-
-    /* Placeholder */
-    input::placeholder,
-    textarea::placeholder {
-        color: #d1d5db !important;
-        -webkit-text-fill-color: #d1d5db !important;
-        opacity: 1 !important;
-    }
-
-    /* Checkbox */
-    div[data-testid="stCheckbox"] p,
-    div[data-testid="stCheckbox"] span {
-        color: #0f172a !important;
-        opacity: 1 !important;
-    }
-
-    /* Cargador de archivos */
-    div[data-testid="stFileUploader"] section {
-        background: #252832 !important;
-        border-color: #4b5563 !important;
-    }
-
-    div[data-testid="stFileUploader"] section *,
-    div[data-testid="stFileUploader"] small,
-    div[data-testid="stFileUploader"] p,
-    div[data-testid="stFileUploader"] span {
-        color: #e5e7eb !important;
-        opacity: 1 !important;
-    }
-
-    div[data-testid="stFileUploader"] button {
-        color: #ffffff !important;
-        border-color: #64748b !important;
-    }
-
-    /* Expander */
-    div[data-testid="stExpander"] details {
-        border: 1px solid #d1d5db !important;
-        border-radius: 8px !important;
-    }
-
-    div[data-testid="stExpander"] summary {
-        background: #20232c !important;
-        border-radius: 6px !important;
-    }
-
-    div[data-testid="stExpander"] summary *,
-    div[data-testid="stExpander"] summary p,
-    div[data-testid="stExpander"] summary span {
-        color: #ffffff !important;
-        opacity: 1 !important;
-        font-weight: 700 !important;
-    }
-
-    /* Formularios */
-    div[data-testid="stForm"] {
-        background: #ffffff !important;
-        border: 0 !important;
-    }
-
-    div[data-testid="stForm"] p,
-    div[data-testid="stForm"] label,
-    div[data-testid="stForm"] span {
-        opacity: 1 !important;
-    }
-
-    /* Alertas */
-    div[data-testid="stAlert"] p,
-    div[data-testid="stAlert"] span {
-        color: inherit !important;
-        opacity: 1 !important;
-    }
-
-    /* Tablas */
-    div[data-testid="stDataFrame"] {
-        color: #0f172a !important;
-    }
-
-    /* Botones primarios */
-    div[data-testid="stFormSubmitButton"] button {
-        color: #ffffff !important;
-        font-weight: 700 !important;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
 
 def estado_visual(estado):
     estado_txt = str(estado).lower()
@@ -565,6 +402,15 @@ with tabs[5]:
                 )
                 opciones_documento[etiqueta] = int(doc.get("id"))
 
+        laboratorio_acreditado = st.checkbox(
+            "Laboratorio acreditado",
+            key=f"laboratorio_acreditado_{codigo}",
+            help=(
+                "Al activarlo se habilitan los campos de organismo "
+                "acreditador y alcance acreditado."
+            ),
+        )
+
         with st.form(
             f"form_calibracion_{codigo}",
             clear_on_submit=True,
@@ -583,9 +429,6 @@ with tabs[5]:
                 laboratorio_calibracion = st.text_input(
                     "Laboratorio que realizó la calibración",
                 )
-                laboratorio_acreditado = st.checkbox(
-                    "Laboratorio acreditado",
-                )
                 organismo_acreditador = st.text_input(
                     "Organismo acreditador",
                     placeholder="Ej.: ONAC",
@@ -593,6 +436,9 @@ with tabs[5]:
                 )
                 alcance_acreditado = st.text_input(
                     "Alcance acreditado",
+                    placeholder=(
+                        "Ej.: Masa, balanzas, intervalo y capacidad"
+                    ),
                     disabled=not laboratorio_acreditado,
                 )
                 responsable_calibracion = st.text_input(
