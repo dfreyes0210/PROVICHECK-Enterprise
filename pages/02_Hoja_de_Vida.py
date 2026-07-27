@@ -402,12 +402,25 @@ with tabs[5]:
                 )
                 opciones_documento[etiqueta] = int(doc.get("id"))
 
+        st.markdown(
+            """
+            <div class="pc-accreditation-box">
+                <strong>🏛️ Acreditación del laboratorio</strong><br>
+                <span>
+                    Active la opción cuando la calibración esté cubierta
+                    por un alcance acreditado.
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         laboratorio_acreditado = st.checkbox(
-            "Laboratorio acreditado",
+            "Sí, el laboratorio está acreditado",
             key=f"laboratorio_acreditado_{codigo}",
             help=(
-                "Al activarlo se habilitan los campos de organismo "
-                "acreditador y alcance acreditado."
+                "Al activarlo se habilitan Organismo acreditador "
+                "y Alcance acreditado."
             ),
         )
 
