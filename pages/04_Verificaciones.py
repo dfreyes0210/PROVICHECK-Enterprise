@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -42,6 +42,469 @@ st.caption(
 )
 
 DECIMALES = 4
+DIAS_ALERTA_VENCIMIENTO = 30
+
+st.markdown(
+    """
+    <style>
+    /* Valores técnicos de las tarjetas: tamaño uniforme de 12 px */
+    .provicheck-tech-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0.35rem 0 0.8rem 0;
+    }
+
+    .provicheck-tech-box {
+        background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+        border: 1px solid #cbd8e8;
+        border-top: 3px solid #147a3b;
+        border-radius: 10px;
+        padding: 0.62rem 0.72rem;
+        min-height: 72px;
+        box-shadow: 0 3px 10px rgba(15, 39, 71, 0.06);
+    }
+
+    .provicheck-tech-label {
+        color: #35506f;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.2;
+        margin-bottom: 0.42rem;
+    }
+
+    .provicheck-tech-value {
+        color: #0f2747;
+        font-size: 12px;
+        font-weight: 800;
+        line-height: 1.25;
+        overflow-wrap: anywhere;
+    }
+
+    .provicheck-pattern-box {
+        border: 1px solid #cbd8e8;
+        border-left: 5px solid #147a3b;
+        border-radius: 10px;
+        background: #f8fbff;
+        padding: 0.7rem 0.85rem;
+        margin: 0.4rem 0 0.8rem 0;
+        color: #0f2747;
+        font-size: 12px;
+        line-height: 1.45;
+    }
+
+    .provicheck-pattern-box.warning {
+        border-left-color: #d99a00;
+        background: #fffaf0;
+    }
+
+    .provicheck-pattern-box.danger {
+        border-left-color: #c62828;
+        background: #fff5f5;
+    }
+
+    .provicheck-pattern-box.neutral {
+        border-left-color: #6b7d90;
+        background: #f7f8fa;
+    }
+
+    .provicheck-pattern-title {
+        font-size: 12px;
+        font-weight: 800;
+        margin-bottom: 0.3rem;
+    }
+
+    .provicheck-pattern-status {
+        font-size: 12px;
+        font-weight: 800;
+        margin-top: 0.35rem;
+    }
+
+    /* El resultado digitado queda con el mismo tamaño visual de 12 px */
+    div[data-testid="stNumberInput"] input {
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        color: #0f2747 !important;
+    }
+
+    div[data-testid="stNumberInput"] label p {
+        font-size: 12px !important;
+        font-weight: 600 !important;
+    }
+
+    @media (max-width: 900px) {
+        .provicheck-tech-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def texto_seguro(valor, por_defecto="No informado"):
+    if valor is None:
+        return por_defecto
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return por_defecto
+
+    return texto
+
+
+def normalizar_codigo(valor):
+    texto = texto_seguro(valor, "")
+    if not texto:
+        return ""
+
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+
+    return texto
+
+
+def convertir_fecha(valor):
+    if valor is None:
+        return None
+
+    if isinstance(valor, datetime):
+        return valor.date()
+
+    if isinstance(valor, date):
+        return valor
+
+    texto = texto_seguro(valor, "")
+    if not texto:
+        return None
+
+    formatos = (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d %H:%M:%S",
+    )
+
+    for formato in formatos:
+        try:
+            return datetime.strptime(texto, formato).date()
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(texto).date()
+    except ValueError:
+        return None
+
+
+def construir_indice_patrones(tabla_patrones):
+    indice = {}
+
+    if tabla_patrones.empty or "codigo_patron" not in tabla_patrones.columns:
+        return indice
+
+    for _, fila_patron in tabla_patrones.iterrows():
+        datos = fila_patron.to_dict()
+        codigo = normalizar_codigo(datos.get("codigo_patron"))
+        if codigo:
+            indice[codigo] = datos
+
+    return indice
+
+
+def construir_relaciones_equipo_patron(tabla_relaciones):
+    relaciones = set()
+
+    columnas_necesarias = {"codigo_equipo", "codigo_patron"}
+    if (
+        tabla_relaciones.empty
+        or not columnas_necesarias.issubset(tabla_relaciones.columns)
+    ):
+        return relaciones
+
+    for _, fila_relacion in tabla_relaciones.iterrows():
+        codigo_equipo_rel = normalizar_codigo(
+            fila_relacion.get("codigo_equipo")
+        )
+        codigo_patron_rel = normalizar_codigo(
+            fila_relacion.get("codigo_patron")
+        )
+        estado_relacion = texto_seguro(
+            fila_relacion.get("estado"),
+            "Activo",
+        ).lower()
+
+        if (
+            codigo_equipo_rel
+            and codigo_patron_rel
+            and estado_relacion not in {"inactivo", "anulado", "retirado"}
+        ):
+            relaciones.add((codigo_equipo_rel, codigo_patron_rel))
+
+    return relaciones
+
+
+def evaluar_patron(
+    codigo_equipo_actual,
+    codigo_patron,
+    indice_patrones,
+    relaciones_equipo_patron,
+    fecha_referencia,
+):
+    codigo = normalizar_codigo(codigo_patron)
+
+    resultado = {
+        "requiere_patron": bool(codigo),
+        "codigo": codigo,
+        "descripcion": "",
+        "marca": "",
+        "valor_nominal": None,
+        "unidad": "",
+        "fecha_vencimiento": None,
+        "fecha_vencimiento_texto": "Sin fecha",
+        "dias_para_vencer": None,
+        "estado": "No aplica",
+        "mensaje": "Este punto no tiene patrón asociado.",
+        "clase_css": "neutral",
+        "icono": "⚪",
+        "bloqueado": False,
+        "relacion_valida": True,
+    }
+
+    if not codigo:
+        return resultado
+
+    datos_patron = indice_patrones.get(codigo)
+
+    if datos_patron is None:
+        resultado.update(
+            {
+                "estado": "Sin información",
+                "mensaje": (
+                    "El código está asignado al punto, pero no fue encontrado "
+                    "en Equipos_Patrones. El punto permanece habilitado."
+                ),
+                "clase_css": "warning",
+                "icono": "🟡",
+                "relacion_valida": (
+                    normalizar_codigo(codigo_equipo_actual),
+                    codigo,
+                ) in relaciones_equipo_patron,
+            }
+        )
+        return resultado
+
+    fecha_vencimiento = convertir_fecha(
+        datos_patron.get("fecha_vencimiento_calibracion")
+    )
+    estado_maestro = texto_seguro(
+        datos_patron.get("estado"),
+        "Activo",
+    ).lower()
+
+    relacion_valida = (
+        normalizar_codigo(codigo_equipo_actual),
+        codigo,
+    ) in relaciones_equipo_patron
+
+    resultado.update(
+        {
+            "descripcion": texto_seguro(
+                datos_patron.get("descripcion"),
+                "Sin descripción",
+            ),
+            "marca": texto_seguro(
+                datos_patron.get("marca"),
+                "Sin marca",
+            ),
+            "valor_nominal": numero_seguro(
+                datos_patron.get("valor_nominal_g")
+            ),
+            "unidad": texto_seguro(datos_patron.get("unidad"), ""),
+            "fecha_vencimiento": fecha_vencimiento,
+            "fecha_vencimiento_texto": (
+                fecha_vencimiento.strftime("%d/%m/%Y")
+                if fecha_vencimiento
+                else "Sin fecha"
+            ),
+            "relacion_valida": relacion_valida,
+        }
+    )
+
+    if estado_maestro in {"inactivo", "anulado", "retirado", "fuera de servicio"}:
+        resultado.update(
+            {
+                "estado": "No disponible",
+                "mensaje": (
+                    "El patrón está marcado como no disponible en la base maestra. "
+                    "Solo este punto queda bloqueado."
+                ),
+                "clase_css": "danger",
+                "icono": "🔴",
+                "bloqueado": True,
+            }
+        )
+        return resultado
+
+    if fecha_vencimiento is None:
+        resultado.update(
+            {
+                "estado": "Sin fecha de vencimiento",
+                "mensaje": (
+                    "No se encontró fecha de vencimiento. "
+                    "El punto permanece habilitado con advertencia."
+                ),
+                "clase_css": "warning",
+                "icono": "🟡",
+            }
+        )
+        return resultado
+
+    dias_para_vencer = (fecha_vencimiento - fecha_referencia).days
+    resultado["dias_para_vencer"] = dias_para_vencer
+
+    if dias_para_vencer < 0:
+        resultado.update(
+            {
+                "estado": "Vencido",
+                "mensaje": (
+                    f"El patrón venció hace {abs(dias_para_vencer)} día(s). "
+                    "Solo este punto queda bloqueado."
+                ),
+                "clase_css": "danger",
+                "icono": "🔴",
+                "bloqueado": True,
+            }
+        )
+    elif dias_para_vencer <= DIAS_ALERTA_VENCIMIENTO:
+        resultado.update(
+            {
+                "estado": "Próximo a vencer",
+                "mensaje": (
+                    f"El patrón vence en {dias_para_vencer} día(s). "
+                    "El punto puede verificarse."
+                ),
+                "clase_css": "warning",
+                "icono": "🟡",
+            }
+        )
+    else:
+        resultado.update(
+            {
+                "estado": "Vigente",
+                "mensaje": (
+                    f"Patrón vigente. Faltan {dias_para_vencer} día(s) "
+                    "para el vencimiento."
+                ),
+                "clase_css": "",
+                "icono": "🟢",
+            }
+        )
+
+    if not relacion_valida:
+        resultado["mensaje"] += (
+            " Advertencia: no se encontró una relación activa entre "
+            "este equipo y el patrón."
+        )
+        if not resultado["bloqueado"]:
+            resultado["clase_css"] = "warning"
+            resultado["icono"] = "🟡"
+
+    return resultado
+
+
+def mostrar_panel_patron(info_patron, decimales):
+    if not info_patron["requiere_patron"]:
+        st.markdown(
+            """
+            <div class="provicheck-pattern-box neutral">
+                <div class="provicheck-pattern-title">
+                    ⚪ PATRÓN: NO APLICA
+                </div>
+                Este punto no requiere un patrón metrológico.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        return
+
+    valor_patron = formatear_numero(
+        info_patron.get("valor_nominal"),
+        decimales,
+    )
+    unidad_patron = info_patron.get("unidad", "")
+    relacion_texto = (
+        "Confirmada"
+        if info_patron.get("relacion_valida")
+        else "No encontrada"
+    )
+
+    st.markdown(
+        f"""
+        <div class="provicheck-pattern-box {info_patron['clase_css']}">
+            <div class="provicheck-pattern-title">
+                {info_patron['icono']} PATRÓN ASOCIADO ·
+                {info_patron['estado'].upper()}
+            </div>
+            <strong>Código:</strong> {info_patron['codigo']}<br>
+            <strong>Descripción:</strong>
+            {info_patron.get('descripcion') or 'Sin información'}<br>
+            <strong>Marca:</strong>
+            {info_patron.get('marca') or 'Sin información'}<br>
+            <strong>Valor nominal:</strong>
+            {valor_patron} {unidad_patron}<br>
+            <strong>Vencimiento:</strong>
+            {info_patron['fecha_vencimiento_texto']}<br>
+            <strong>Relación equipo–patrón:</strong> {relacion_texto}
+            <div class="provicheck-pattern-status">
+                {info_patron['mensaje']}
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def mostrar_valores_tecnicos(
+    valor_nominal,
+    limite_inferior,
+    limite_superior,
+    unidad,
+    decimales,
+):
+    patron_texto = formatear_numero(valor_nominal, decimales)
+    inferior_texto = formatear_numero(limite_inferior, decimales)
+    superior_texto = formatear_numero(limite_superior, decimales)
+
+    st.markdown(
+        f"""
+        <div class="provicheck-tech-grid">
+            <div class="provicheck-tech-box">
+                <div class="provicheck-tech-label">Patrón</div>
+                <div class="provicheck-tech-value">
+                    {patron_texto} {unidad}
+                </div>
+            </div>
+            <div class="provicheck-tech-box">
+                <div class="provicheck-tech-label">Límite inferior</div>
+                <div class="provicheck-tech-value">
+                    {inferior_texto} {unidad}
+                </div>
+            </div>
+            <div class="provicheck-tech-box">
+                <div class="provicheck-tech-label">Límite superior</div>
+                <div class="provicheck-tech-value">
+                    {superior_texto} {unidad}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def numero_seguro(valor):
@@ -114,6 +577,8 @@ OPCIONES_OBSERVACION = [
 
 equipos = cargar_hoja("Equipos")
 puntos = cargar_hoja("Puntos_Verificacion")
+patrones = cargar_hoja("Equipos_Patrones")
+relaciones_equipo_patron = cargar_hoja("Relacion_Equipo_Patron")
 
 if equipos.empty:
     st.error("No se encontró la hoja Equipos.")
@@ -128,6 +593,20 @@ equipos.columns = [str(columna).strip() for columna in equipos.columns]
 
 puntos = puntos.copy()
 puntos.columns = [str(columna).strip() for columna in puntos.columns]
+
+patrones = patrones.copy()
+patrones.columns = [str(columna).strip() for columna in patrones.columns]
+
+relaciones_equipo_patron = relaciones_equipo_patron.copy()
+relaciones_equipo_patron.columns = [
+    str(columna).strip()
+    for columna in relaciones_equipo_patron.columns
+]
+
+indice_patrones = construir_indice_patrones(patrones)
+relaciones_activas = construir_relaciones_equipo_patron(
+    relaciones_equipo_patron
+)
 
 alias_columnas = {
     "limite_inferior_g": "limite_inferior",
@@ -334,31 +813,57 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 limite_superior,
             ) = obtener_limites_reales(fila_original, punto)
 
-            d1, d2, d3 = st.columns(3)
-            d1.metric(
-                "Patrón",
-                f"{formatear_numero(valor_nominal, decimales_punto)} {unidad}",
-            )
-            d2.metric(
-                "Límite inferior",
-                f"{formatear_numero(limite_inferior, decimales_punto)} {unidad}",
-            )
-            d3.metric(
-                "Límite superior",
-                f"{formatear_numero(limite_superior, decimales_punto)} {unidad}",
+            codigo_patron_punto = fila_original.get("codigo_patron", "")
+            info_patron = evaluar_patron(
+                codigo_equipo,
+                codigo_patron_punto,
+                indice_patrones,
+                relaciones_activas,
+                fecha_registro,
             )
 
-            resultado = st.number_input(
+            mostrar_panel_patron(info_patron, decimales_punto)
+            mostrar_valores_tecnicos(
+                valor_nominal,
+                limite_inferior,
+                limite_superior,
+                unidad,
+                decimales_punto,
+            )
+
+            resultado_capturado = st.number_input(
                 "Resultado observado",
                 key=f"resultado_{codigo_equipo}_{id_punto}_{i}",
                 format=f"%.{decimales_punto}f",
+                disabled=info_patron["bloqueado"],
+                help=(
+                    "Este campo está bloqueado únicamente para este punto "
+                    "porque el patrón asociado no se encuentra disponible."
+                    if info_patron["bloqueado"]
+                    else "Ingrese la lectura observada para este punto."
+                ),
             )
 
-            observacion_tipo = st.selectbox(
-                "Observación",
-                OPCIONES_OBSERVACION,
-                key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
-            )
+            if info_patron["bloqueado"]:
+                resultado = None
+                observacion_tipo = (
+                    "Patrón vencido"
+                    if info_patron["estado"] == "Vencido"
+                    else "Patrón no disponible"
+                )
+                st.selectbox(
+                    "Observación",
+                    [observacion_tipo],
+                    key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
+                    disabled=True,
+                )
+            else:
+                resultado = resultado_capturado
+                observacion_tipo = st.selectbox(
+                    "Observación",
+                    OPCIONES_OBSERVACION,
+                    key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
+                )
 
             observacion_texto = ""
             if observacion_tipo == "Otro":
@@ -368,11 +873,21 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     placeholder="Describa la novedad encontrada.",
                 )
 
-            observacion_final = (
-                observacion_texto.strip()
-                if observacion_tipo == "Otro"
-                else observacion_tipo
-            )
+            if info_patron["bloqueado"]:
+                observacion_final = (
+                    f"{observacion_tipo}. Patrón "
+                    f"{info_patron.get('codigo') or 'sin código'}; "
+                    f"estado: {info_patron.get('estado')}; "
+                    f"vencimiento: "
+                    f"{info_patron.get('fecha_vencimiento_texto')}. "
+                    f"{info_patron.get('mensaje')}"
+                )
+            else:
+                observacion_final = (
+                    observacion_texto.strip()
+                    if observacion_tipo == "Otro"
+                    else observacion_tipo
+                )
 
             resultado_num = numero_seguro(resultado)
             error_calculado = (
@@ -412,7 +927,13 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 f"{unidad}"
             )
 
-            if observacion_tipo != "Sin novedades":
+            if info_patron["bloqueado"]:
+                estado_punto = "No evaluado"
+                st.error(
+                    "🔴 NO EVALUADO · El patrón asociado impide evaluar "
+                    "únicamente este punto"
+                )
+            elif observacion_tipo != "Sin novedades":
                 estado_punto = "No evaluado"
                 st.warning("🟡 NO EVALUADO · Existe una novedad registrada")
             elif evaluacion.get("cumple") is True:
@@ -441,6 +962,14 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     ),
                     "estado_punto": estado_punto,
                     "observacion": observacion_final,
+                    "codigo_patron": info_patron.get("codigo", ""),
+                    "estado_patron": info_patron.get("estado", ""),
+                    "fecha_vencimiento_patron": (
+                        info_patron["fecha_vencimiento"].isoformat()
+                        if info_patron.get("fecha_vencimiento")
+                        else ""
+                    ),
+                    "patron_bloqueado": info_patron.get("bloqueado", False),
                 }
             )
 
