@@ -1,3 +1,6 @@
+from datetime import date, datetime
+from pathlib import Path
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -6,6 +9,8 @@ from database import crear_base_datos
 
 from utils.ui import aplicar_estilo, encabezado
 from utils.formatos import formatear_numero
+from utils.data import cargar_hoja
+from utils.reportes_pdf import generar_informe_tendencia_pdf
 from utils.documentos import (
     actualizar_estados_documentos,
     eliminar_documento,
@@ -74,6 +79,261 @@ def estado_visual(estado):
     return f"⚪ {estado}"
 
 
+
+def texto_seguro(valor, por_defecto="No registrado"):
+    if valor is None:
+        return por_defecto
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return por_defecto
+
+    return texto
+
+
+def normalizar_codigo(valor):
+    texto = texto_seguro(valor, "")
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+    return texto
+
+
+def convertir_fecha(valor):
+    fecha = pd.to_datetime(valor, errors="coerce")
+    if pd.isna(fecha):
+        return None
+    return fecha.date()
+
+
+def buscar_logo_providencia():
+    candidatos = [
+        Path("assets/logo_providencia.png"),
+        Path("logo_providencia.png"),
+        Path(__file__).resolve().parent.parent / "assets" / "logo_providencia.png",
+    ]
+
+    for candidato in candidatos:
+        if candidato.exists():
+            return candidato
+
+    return None
+
+
+def cargar_catalogo_patrones():
+    puntos_catalogo = cargar_hoja("Puntos_Verificacion")
+    patrones_catalogo = cargar_hoja("Equipos_Patrones")
+
+    if not puntos_catalogo.empty:
+        puntos_catalogo = puntos_catalogo.copy()
+        puntos_catalogo.columns = [
+            str(columna).strip()
+            for columna in puntos_catalogo.columns
+        ]
+
+    if not patrones_catalogo.empty:
+        patrones_catalogo = patrones_catalogo.copy()
+        patrones_catalogo.columns = [
+            str(columna).strip()
+            for columna in patrones_catalogo.columns
+        ]
+
+    return puntos_catalogo, patrones_catalogo
+
+
+def preparar_patrones_equipo(codigo_equipo):
+    puntos_catalogo, patrones_catalogo = cargar_catalogo_patrones()
+
+    if puntos_catalogo.empty:
+        return pd.DataFrame()
+
+    codigo_normalizado = normalizar_codigo(codigo_equipo)
+    puntos_catalogo["codigo_equipo_normalizado"] = (
+        puntos_catalogo["codigo_equipo"]
+        .apply(normalizar_codigo)
+    )
+
+    puntos_equipo_catalogo = puntos_catalogo[
+        puntos_catalogo["codigo_equipo_normalizado"]
+        == codigo_normalizado
+    ].copy()
+
+    if puntos_equipo_catalogo.empty:
+        return pd.DataFrame()
+
+    puntos_equipo_catalogo["codigo_patron"] = (
+        puntos_equipo_catalogo["codigo_patron"]
+        .apply(normalizar_codigo)
+    )
+
+    if patrones_catalogo.empty:
+        return puntos_equipo_catalogo
+
+    patrones_catalogo["codigo_patron"] = (
+        patrones_catalogo["codigo_patron"]
+        .apply(normalizar_codigo)
+    )
+
+    columnas_patron = [
+        columna
+        for columna in [
+            "codigo_patron",
+            "descripcion",
+            "marca",
+            "valor_nominal_g",
+            "unidad",
+            "fecha_vencimiento_calibracion",
+            "estado",
+            "observaciones",
+        ]
+        if columna in patrones_catalogo.columns
+    ]
+
+    return puntos_equipo_catalogo.merge(
+        patrones_catalogo[columnas_patron],
+        on="codigo_patron",
+        how="left",
+        suffixes=("_punto", "_patron"),
+    )
+
+
+def crear_figura_tendencia(df_punto, punto_sel, unidad):
+    figura = go.Figure()
+
+    figura.add_trace(
+        go.Scatter(
+            x=df_punto["fecha_hora"],
+            y=df_punto["resultado"],
+            mode="lines+markers",
+            name="Resultado observado",
+            customdata=df_punto[
+                ["responsable", "estado_punto", "observacion"]
+            ].fillna("").to_numpy(),
+            hovertemplate=(
+                "<b>%{x|%d/%m/%Y %H:%M}</b><br>"
+                "Resultado: %{y}<br>"
+                "Responsable: %{customdata[0]}<br>"
+                "Estado: %{customdata[1]}<br>"
+                "Observación: %{customdata[2]}"
+                "<extra></extra>"
+            ),
+        )
+    )
+
+    figura.add_trace(
+        go.Scatter(
+            x=df_punto["fecha_hora"],
+            y=df_punto["valor_nominal"],
+            mode="lines",
+            name="Valor nominal",
+        )
+    )
+
+    figura.add_trace(
+        go.Scatter(
+            x=df_punto["fecha_hora"],
+            y=df_punto["limite_superior"],
+            mode="lines",
+            line={"dash": "dash"},
+            name="Límite superior",
+        )
+    )
+
+    figura.add_trace(
+        go.Scatter(
+            x=df_punto["fecha_hora"],
+            y=df_punto["limite_inferior"],
+            mode="lines",
+            line={"dash": "dash"},
+            name="Límite inferior",
+        )
+    )
+
+    fuera_tolerancia = df_punto[
+        df_punto["estado_punto"].astype(str).str.lower()
+        == "no cumple"
+    ]
+
+    if not fuera_tolerancia.empty:
+        figura.add_trace(
+            go.Scatter(
+                x=fuera_tolerancia["fecha_hora"],
+                y=fuera_tolerancia["resultado"],
+                mode="markers",
+                marker={"size": 12, "symbol": "x"},
+                name="Fuera de tolerancia",
+            )
+        )
+
+    figura.update_layout(
+        height=520,
+        title=f"Tendencia histórica - {punto_sel}",
+        xaxis_title="Fecha y hora",
+        yaxis_title=f"Resultado ({unidad})" if unidad else "Resultado",
+        legend_title="Serie",
+        hovermode="x unified",
+        margin={"l": 40, "r": 25, "t": 65, "b": 45},
+    )
+
+    return figura
+
+
+def calcular_resumen_tendencia(df_punto):
+    resultados = pd.to_numeric(
+        df_punto["resultado"],
+        errors="coerce",
+    ).dropna()
+    errores = pd.to_numeric(
+        df_punto["error"],
+        errors="coerce",
+    ).dropna()
+
+    total = len(df_punto)
+    conformes = int(
+        df_punto["estado_punto"]
+        .astype(str)
+        .str.lower()
+        .eq("cumple")
+        .sum()
+    )
+    no_conformes = int(
+        df_punto["estado_punto"]
+        .astype(str)
+        .str.lower()
+        .eq("no cumple")
+        .sum()
+    )
+    no_evaluados = int(
+        df_punto["estado_punto"]
+        .astype(str)
+        .str.lower()
+        .eq("no evaluado")
+        .sum()
+    )
+
+    return {
+        "total": total,
+        "promedio": resultados.mean() if not resultados.empty else None,
+        "desviacion": (
+            resultados.std(ddof=1)
+            if len(resultados) > 1
+            else 0.0
+        ),
+        "minimo": resultados.min() if not resultados.empty else None,
+        "maximo": resultados.max() if not resultados.empty else None,
+        "error_promedio": errores.mean() if not errores.empty else None,
+        "conformes": conformes,
+        "no_conformes": no_conformes,
+        "no_evaluados": no_evaluados,
+        "cumplimiento": (
+            conformes / total * 100
+            if total
+            else 0.0
+        ),
+    }
+
+
 equipo = st.session_state.get("equipo_seleccionado")
 
 if not equipo:
@@ -94,7 +354,7 @@ serie = equipo.get("serie", "Sin serie")
 frecuencia = equipo.get("frecuencia_verificacion", "Sin frecuencia")
 
 ultima = consultar_ultima_verificacion(codigo)
-historial = consultar_historial_equipo(codigo, limite=20)
+historial = consultar_historial_equipo(codigo, limite=5000)
 eventos = consultar_eventos_equipo(codigo, limite=20)
 actualizar_estados_documentos(codigo)
 documentos = consultar_documentos_equipo(codigo)
@@ -229,122 +489,351 @@ with tabs[3]:
         st.dataframe(eventos, width="stretch", hide_index=True)
 
 with tabs[4]:
-    st.markdown("### Tendencia por punto de verificación")
+    st.markdown("### 📈 Tendencias de verificaciones")
+    st.caption(
+        "Seleccione el patrón y el periodo de análisis. "
+        "PROVICHECK mostrará la tendencia histórica y generará "
+        "un informe PDF institucional."
+    )
 
     if historial.empty:
-        st.info("Aún no hay datos suficientes para construir tendencias.")
+        st.info("Aún no hay verificaciones registradas para este equipo.")
     else:
         detalles = []
 
-        for id_sesion in historial["id_sesion"].tolist():
-            df_detalle = consultar_detalle_sesion(id_sesion)
+        for _, fila_sesion in historial.iterrows():
+            id_sesion_actual = fila_sesion.get("id_sesion")
+            df_detalle = consultar_detalle_sesion(id_sesion_actual)
 
-            if not df_detalle.empty:
-                df_detalle = df_detalle.copy()
-                df_detalle["id_sesion"] = id_sesion
+            if df_detalle.empty:
+                continue
 
-                fila_sesion = historial[historial["id_sesion"] == id_sesion].iloc[0]
-                df_detalle["fecha"] = fila_sesion.get("fecha")
-                df_detalle["hora"] = fila_sesion.get("hora")
-
-                detalles.append(df_detalle)
+            df_detalle = df_detalle.copy()
+            df_detalle["id_sesion"] = id_sesion_actual
+            df_detalle["fecha"] = fila_sesion.get("fecha")
+            df_detalle["hora"] = fila_sesion.get("hora")
+            df_detalle["responsable"] = fila_sesion.get(
+                "responsable",
+                "No registrado",
+            )
+            detalles.append(df_detalle)
 
         if not detalles:
-            st.info("No hay detalle suficiente para graficar tendencias.")
+            st.info("No hay detalle suficiente para construir tendencias.")
         else:
             df_tendencia = pd.concat(detalles, ignore_index=True)
 
-            puntos_disponibles = (
-                df_tendencia["punto"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
+            columnas_numericas = [
+                "valor_nominal",
+                "resultado",
+                "error",
+                "limite_inferior",
+                "limite_superior",
+            ]
+            for columna in columnas_numericas:
+                if columna in df_tendencia.columns:
+                    df_tendencia[columna] = pd.to_numeric(
+                        df_tendencia[columna],
+                        errors="coerce",
+                    )
 
-            punto_sel = st.selectbox(
-                "Seleccione punto",
-                puntos_disponibles,
-            )
-
-            df_punto = df_tendencia[
-                df_tendencia["punto"].astype(str) == str(punto_sel)
-            ].copy()
-
-            df_punto["fecha_hora"] = pd.to_datetime(
-                df_punto["fecha"].astype(str) + " " + df_punto["hora"].astype(str),
+            df_tendencia["fecha_hora"] = pd.to_datetime(
+                df_tendencia["fecha"].astype(str)
+                + " "
+                + df_tendencia["hora"].astype(str),
                 errors="coerce",
             )
+            df_tendencia = df_tendencia.dropna(
+                subset=["fecha_hora"]
+            )
 
-            df_punto = df_punto.sort_values("fecha_hora")
+            patrones_equipo = preparar_patrones_equipo(codigo)
 
-            fig = go.Figure()
-
-            fig.add_trace(
-                go.Scatter(
-                    x=df_punto["fecha_hora"],
-                    y=df_punto["resultado"],
-                    mode="lines+markers",
-                    name="Resultado observado",
+            if patrones_equipo.empty:
+                st.warning(
+                    "No se encontraron patrones asociados al equipo "
+                    "en la base maestra."
                 )
-            )
-
-            fig.add_trace(
-                go.Scatter(
-                    x=df_punto["fecha_hora"],
-                    y=df_punto["valor_nominal"],
-                    mode="lines",
-                    name="Valor nominal",
+            else:
+                patrones_equipo = patrones_equipo.copy()
+                patrones_equipo["etiqueta_patron"] = (
+                    patrones_equipo["codigo_patron"].astype(str)
+                    + " · "
+                    + patrones_equipo["punto_verificacion"].astype(str)
+                    + " "
+                    + patrones_equipo["unidad_punto"].fillna("").astype(str)
                 )
-            )
 
-            fig.add_trace(
-                go.Scatter(
-                    x=df_punto["fecha_hora"],
-                    y=df_punto["limite_superior"],
-                    mode="lines",
-                    name="Límite superior",
+                opciones_patron = (
+                    patrones_equipo["etiqueta_patron"]
+                    .drop_duplicates()
+                    .tolist()
                 )
-            )
 
-            fig.add_trace(
-                go.Scatter(
-                    x=df_punto["fecha_hora"],
-                    y=df_punto["limite_inferior"],
-                    mode="lines",
-                    name="Límite inferior",
-                )
-            )
+                fechas_validas = df_tendencia["fecha_hora"].dropna()
+                fecha_minima = fechas_validas.min().date()
+                fecha_maxima = fechas_validas.max().date()
 
-            fig.update_layout(
-                height=480,
-                title=f"Tendencia histórica - {punto_sel}",
-                xaxis_title="Fecha",
-                yaxis_title="Resultado",
-                legend_title="Serie",
-            )
+                f1, f2, f3 = st.columns([2.2, 1, 1])
 
-            st.plotly_chart(fig, width="stretch")
+                with f1:
+                    patron_seleccionado = st.selectbox(
+                        "Patrón para la tendencia",
+                        opciones_patron,
+                        key=f"patron_tendencia_{codigo}",
+                    )
 
-            st.markdown("### Datos usados para la tendencia")
-            st.dataframe(
-                df_punto[
-                    [
-                        "fecha",
-                        "hora",
-                        "punto",
-                        "valor_nominal",
-                        "resultado",
-                        "error",
-                        "limite_inferior",
-                        "limite_superior",
-                        "estado_punto",
-                        "observacion",
-                    ]
-                ],
-                width="stretch",
-                hide_index=True,
-            )
+                with f2:
+                    fecha_desde = st.date_input(
+                        "Desde",
+                        value=fecha_minima,
+                        min_value=fecha_minima,
+                        max_value=fecha_maxima,
+                        format="DD/MM/YYYY",
+                        key=f"fecha_desde_tendencia_{codigo}",
+                    )
+
+                with f3:
+                    fecha_hasta = st.date_input(
+                        "Hasta",
+                        value=fecha_maxima,
+                        min_value=fecha_minima,
+                        max_value=fecha_maxima,
+                        format="DD/MM/YYYY",
+                        key=f"fecha_hasta_tendencia_{codigo}",
+                    )
+
+                if fecha_desde > fecha_hasta:
+                    st.error(
+                        "La fecha inicial no puede ser posterior "
+                        "a la fecha final."
+                    )
+                else:
+                    patron_fila = patrones_equipo[
+                        patrones_equipo["etiqueta_patron"]
+                        == patron_seleccionado
+                    ].iloc[0]
+
+                    punto_sel = str(
+                        patron_fila.get("punto_verificacion")
+                    )
+                    codigo_patron_sel = texto_seguro(
+                        patron_fila.get("codigo_patron"),
+                        "",
+                    )
+                    unidad_sel = texto_seguro(
+                        patron_fila.get("unidad_punto")
+                        or patron_fila.get("unidad_patron"),
+                        "",
+                    )
+
+                    df_punto = df_tendencia[
+                        df_tendencia["punto"].astype(str)
+                        == punto_sel
+                    ].copy()
+
+                    inicio = pd.Timestamp(fecha_desde)
+                    fin = (
+                        pd.Timestamp(fecha_hasta)
+                        + pd.Timedelta(days=1)
+                        - pd.Timedelta(microseconds=1)
+                    )
+
+                    df_punto = df_punto[
+                        (df_punto["fecha_hora"] >= inicio)
+                        & (df_punto["fecha_hora"] <= fin)
+                    ].copy()
+                    df_punto = df_punto.sort_values("fecha_hora")
+
+                    with st.container(border=True):
+                        st.markdown("#### 🔬 Patrón seleccionado")
+                        p1, p2, p3, p4 = st.columns(4)
+                        p1.metric(
+                            "Código",
+                            codigo_patron_sel,
+                        )
+                        p2.metric(
+                            "Valor nominal",
+                            (
+                                f"{formatear_numero(
+                                    patron_fila.get(
+                                        'valor_nominal_g_patron'
+                                    ),
+                                    4,
+                                )} {unidad_sel}"
+                            ),
+                        )
+                        p3.metric(
+                            "Vencimiento",
+                            texto_seguro(
+                                patron_fila.get(
+                                    "fecha_vencimiento_calibracion"
+                                )
+                            ),
+                        )
+                        p4.metric(
+                            "Estado",
+                            texto_seguro(
+                                patron_fila.get("estado_patron")
+                                or patron_fila.get("estado")
+                            ),
+                        )
+                        st.caption(
+                            f"{texto_seguro(patron_fila.get('descripcion'))} · "
+                            f"Marca: {texto_seguro(patron_fila.get('marca'))}"
+                        )
+
+                    if df_punto.empty:
+                        st.warning(
+                            "No hay verificaciones para este patrón "
+                            "en el periodo seleccionado."
+                        )
+                    else:
+                        resumen = calcular_resumen_tendencia(df_punto)
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Registros", resumen["total"])
+                        m2.metric(
+                            "Promedio",
+                            formatear_numero(resumen["promedio"], 4),
+                        )
+                        m3.metric(
+                            "Desviación estándar",
+                            formatear_numero(
+                                resumen["desviacion"],
+                                4,
+                            ),
+                        )
+                        m4.metric(
+                            "Cumplimiento",
+                            f"{resumen['cumplimiento']:.1f} %",
+                        )
+
+                        m5, m6, m7, m8 = st.columns(4)
+                        m5.metric(
+                            "Mínimo",
+                            formatear_numero(resumen["minimo"], 4),
+                        )
+                        m6.metric(
+                            "Máximo",
+                            formatear_numero(resumen["maximo"], 4),
+                        )
+                        m7.metric(
+                            "Error promedio",
+                            formatear_numero(
+                                resumen["error_promedio"],
+                                4,
+                            ),
+                        )
+                        m8.metric(
+                            "No evaluados",
+                            resumen["no_evaluados"],
+                        )
+
+                        figura = crear_figura_tendencia(
+                            df_punto,
+                            punto_sel,
+                            unidad_sel,
+                        )
+                        st.plotly_chart(
+                            figura,
+                            width="stretch",
+                        )
+
+                        st.markdown("### Tabla de resultados")
+                        columnas_tabla = [
+                            "fecha",
+                            "hora",
+                            "resultado",
+                            "error",
+                            "limite_inferior",
+                            "limite_superior",
+                            "estado_punto",
+                            "responsable",
+                            "observacion",
+                        ]
+                        columnas_tabla = [
+                            columna
+                            for columna in columnas_tabla
+                            if columna in df_punto.columns
+                        ]
+
+                        st.dataframe(
+                            df_punto[columnas_tabla],
+                            width="stretch",
+                            hide_index=True,
+                        )
+
+                        informacion_patron_pdf = {
+                            "codigo_patron": codigo_patron_sel,
+                            "descripcion": patron_fila.get(
+                                "descripcion"
+                            ),
+                            "marca": patron_fila.get("marca"),
+                            "valor_nominal_g": patron_fila.get(
+                                "valor_nominal_g_patron"
+                            ),
+                            "unidad": unidad_sel,
+                            "fecha_vencimiento_calibracion": (
+                                patron_fila.get(
+                                    "fecha_vencimiento_calibracion"
+                                )
+                            ),
+                            "estado": (
+                                patron_fila.get("estado_patron")
+                                or patron_fila.get("estado")
+                            ),
+                        }
+
+                        usuario_emision = str(
+                            st.session_state.get(
+                                "nombre_usuario",
+                                st.session_state.get(
+                                    "usuario",
+                                    responsable,
+                                ),
+                            )
+                        )
+
+                        try:
+                            pdf_tendencia = (
+                                generar_informe_tendencia_pdf(
+                                    equipo=equipo,
+                                    patron=informacion_patron_pdf,
+                                    datos=df_punto,
+                                    fecha_inicial=fecha_desde,
+                                    fecha_final=fecha_hasta,
+                                    usuario_emision=usuario_emision,
+                                    logo_path=buscar_logo_providencia(),
+                                    version_sistema="1.0",
+                                )
+                            )
+
+                            nombre_pdf = (
+                                "PROVICHECK_Tendencia_"
+                                f"{codigo}_"
+                                f"{codigo_patron_sel}_"
+                                f"{fecha_desde.isoformat()}_"
+                                f"{fecha_hasta.isoformat()}.pdf"
+                            )
+
+                            st.download_button(
+                                "📄 Generar y descargar informe PDF",
+                                data=pdf_tendencia,
+                                file_name=nombre_pdf,
+                                mime="application/pdf",
+                                type="primary",
+                                width="stretch",
+                                key=(
+                                    f"pdf_tendencia_{codigo}_"
+                                    f"{codigo_patron_sel}"
+                                ),
+                            )
+                        except Exception as exc:
+                            st.error(
+                                "No fue posible generar el informe PDF. "
+                                f"Detalle: {exc}"
+                            )
 
 with tabs[5]:
     st.markdown("### 🧭 Gestión de calibraciones")
