@@ -10,7 +10,6 @@ from database import crear_base_datos
 from utils.ui import (
     aplicar_estilo,
     encabezado,
-    requerir_autenticacion,
     sidebar_pro,
 )
 from utils.formatos import formatear_numero
@@ -59,7 +58,6 @@ st.set_page_config(
 crear_base_datos()
 
 aplicar_estilo()
-requerir_autenticacion()
 sidebar_pro()
 encabezado()
 
