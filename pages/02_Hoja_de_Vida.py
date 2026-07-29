@@ -7,7 +7,12 @@ import streamlit as st
 
 from database import crear_base_datos
 
-from utils.ui import aplicar_estilo, encabezado
+from utils.ui import (
+    aplicar_estilo,
+    encabezado,
+    requerir_autenticacion,
+    sidebar_pro,
+)
 from utils.formatos import formatear_numero
 from utils.data import cargar_hoja
 from utils.reportes_pdf import generar_informe_tendencia_pdf
@@ -54,6 +59,8 @@ st.set_page_config(
 crear_base_datos()
 
 aplicar_estilo()
+requerir_autenticacion()
+sidebar_pro()
 encabezado()
 
 
@@ -1469,9 +1476,13 @@ with tabs[6]:
                 )
                 proveedor_mant = st.text_input(
                     "Proveedor o empresa",
-                    disabled=(
-                        realizado_por_tipo
-                        != "Proveedor externo"
+                    placeholder=(
+                        "Obligatorio cuando el ejecutor sea "
+                        "Proveedor externo"
+                    ),
+                    help=(
+                        "Para personal interno puede dejarse vacío. "
+                        "Para proveedor externo debe registrar la empresa."
                     ),
                 )
                 numero_orden_mant = st.text_input(
@@ -1590,6 +1601,14 @@ with tabs[6]:
             ):
                 st.error(
                     "Debe seleccionar la fecha de finalización."
+                )
+            elif (
+                realizado_por_tipo == "Proveedor externo"
+                and not proveedor_mant.strip()
+            ):
+                st.error(
+                    "Debe registrar el proveedor o empresa que "
+                    "realizó el mantenimiento."
                 )
             else:
                 try:

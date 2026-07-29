@@ -21,3 +21,15 @@ def listar_hojas_excel():
         return pd.ExcelFile(EXCEL_PATH).sheet_names
     except Exception:
         return []
+
+
+def cargar_usuarios() -> pd.DataFrame:
+    """Lee Usuarios sin caché para aplicar cambios de acceso de inmediato."""
+    if not EXCEL_PATH.exists():
+        return pd.DataFrame()
+    try:
+        df = pd.read_excel(EXCEL_PATH, sheet_name="Usuarios")
+        df.columns = df.columns.astype(str).str.strip()
+        return df
+    except Exception:
+        return pd.DataFrame()

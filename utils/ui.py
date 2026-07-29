@@ -1,4 +1,6 @@
 import html
+import hmac
+
 import streamlit as st
 from config import APP_NAME, APP_SUBTITLE, VERSION
 
@@ -68,6 +70,10 @@ def aplicar_estilo():
 
     [data-testid="stSidebar"] * {
         color:#FFFFFF!important;
+    }
+
+    [data-testid="stSidebarNav"] {
+        display:none!important;
     }
 
     [data-testid="stSidebar"] hr {
@@ -531,9 +537,169 @@ def encabezado():
     ''', unsafe_allow_html=True)
 
 
+
+def _normalizar_texto(valor):
+    if valor is None:
+        return ""
+    texto = str(valor).strip()
+    if texto.lower() in {"nan", "nat", "none"}:
+        return ""
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+    return texto
+
+
+def _normalizar_rol(valor):
+    rol = _normalizar_texto(valor).lower()
+    equivalencias = {
+        "administrador": "Administrador",
+        "admin": "Administrador",
+        "líder": "Líder",
+        "lider": "Líder",
+        "supervisor": "Líder",
+        "analista": "Analista",
+    }
+    return equivalencias.get(rol, _normalizar_texto(valor) or "Analista")
+
+
+def _usuario_autorizado(usuario_ingresado, clave_ingresada):
+    from utils.data import cargar_usuarios
+
+    usuarios = cargar_usuarios()
+    if usuarios.empty:
+        return None, (
+            "No fue posible consultar la hoja Usuarios de la base maestra."
+        )
+
+    usuarios = usuarios.copy()
+    usuarios.columns = [
+        str(columna).strip().lower()
+        for columna in usuarios.columns
+    ]
+
+    columnas_requeridas = {
+        "nombre_usuario",
+        "usuario_login",
+        "clave",
+        "rol",
+        "laboratorio_asignado",
+        "estado_usuario",
+    }
+    faltantes = columnas_requeridas.difference(usuarios.columns)
+    if faltantes:
+        return None, (
+            "La hoja Usuarios no tiene todas las columnas requeridas: "
+            + ", ".join(sorted(faltantes))
+        )
+
+    usuario_busqueda = _normalizar_texto(usuario_ingresado).lower()
+    clave_busqueda = _normalizar_texto(clave_ingresada)
+
+    coincidencias = usuarios[
+        usuarios["usuario_login"]
+        .apply(_normalizar_texto)
+        .str.lower()
+        .eq(usuario_busqueda)
+    ].copy()
+
+    if coincidencias.empty:
+        return None, "Usuario o contraseña incorrectos."
+
+    coincidencias["clave_normalizada"] = (
+        coincidencias["clave"].apply(_normalizar_texto)
+    )
+    coincidencias = coincidencias[
+        coincidencias["clave_normalizada"].apply(
+            lambda valor: hmac.compare_digest(valor, clave_busqueda)
+        )
+    ]
+
+    if coincidencias.empty:
+        return None, "Usuario o contraseña incorrectos."
+
+    if len(coincidencias) > 1:
+        return None, (
+            "Existe más de un registro con las mismas credenciales. "
+            "Solicite al administrador corregir la hoja Usuarios."
+        )
+
+    fila = coincidencias.iloc[0]
+    estado = _normalizar_texto(fila.get("estado_usuario")).lower()
+    if estado not in {"activo", "activa", "sí", "si", "1", "true"}:
+        return None, "El usuario se encuentra inactivo."
+
+    datos = {
+        "id_usuario": _normalizar_texto(fila.get("id_usuario")),
+        "nombre_usuario": _normalizar_texto(
+            fila.get("nombre_usuario")
+        ),
+        "usuario": _normalizar_texto(fila.get("usuario_login")),
+        "rol": _normalizar_rol(fila.get("rol")),
+        "laboratorio_asignado": _normalizar_texto(
+            fila.get("laboratorio_asignado")
+        ) or "Todos",
+        "correo": _normalizar_texto(fila.get("correo")),
+    }
+    return datos, None
+
+
+def cerrar_sesion():
+    claves_usuario = [
+        "autenticado",
+        "id_usuario",
+        "nombre_usuario",
+        "usuario",
+        "rol",
+        "laboratorio_asignado",
+        "correo",
+        "equipo_seleccionado",
+    ]
+    for clave in claves_usuario:
+        st.session_state.pop(clave, None)
+    st.session_state["autenticado"] = False
+
+
+def requerir_autenticacion(roles_permitidos=None):
+    if not st.session_state.get("autenticado", False):
+        st.warning(
+            "La sesión no está activa. Ingrese nuevamente desde el Dashboard."
+        )
+        st.page_link("app.py", label="🔐 Ir al inicio de sesión")
+        st.stop()
+
+    if roles_permitidos:
+        rol_actual = _normalizar_rol(st.session_state.get("rol"))
+        permitidos = {
+            _normalizar_rol(rol)
+            for rol in roles_permitidos
+        }
+        if rol_actual not in permitidos:
+            st.error(
+                "Su perfil no tiene autorización para ingresar a este módulo."
+            )
+            st.page_link("app.py", label="🏠 Volver al Dashboard")
+            st.stop()
+
+
 def sidebar_pro():
-    usuario = html.escape(str(st.session_state.get('usuario', '')))
-    rol = html.escape(str(st.session_state.get('rol', 'Administrador')))
+    requerir_autenticacion()
+
+    usuario = html.escape(
+        str(
+            st.session_state.get(
+                "nombre_usuario",
+                st.session_state.get("usuario", ""),
+            )
+        )
+    )
+    rol_original = _normalizar_rol(st.session_state.get("rol"))
+    rol = html.escape(rol_original)
+    laboratorio = html.escape(
+        str(st.session_state.get("laboratorio_asignado", "Todos"))
+    )
+
     with st.sidebar:
         st.markdown(f'''
         <div class="sidebar-brand">
@@ -541,39 +707,75 @@ def sidebar_pro():
             <div class="sidebar-brand-subtitle">Enterprise · {html.escape(str(VERSION))}</div>
         </div>
         ''', unsafe_allow_html=True)
-        st.page_link('app.py', label='🏠 Dashboard')
-        st.page_link('pages/01_Equipos.py', label='🧪 Equipos')
-        st.page_link('pages/02_Hoja_de_Vida.py', label='📘 Hoja de Vida')
-        st.page_link('pages/03_Administracion.py', label='⚙️ Administración')
-        st.page_link('pages/04_Verificaciones.py', label='✅ Verificaciones')
+
+        st.page_link("app.py", label="🏠 Dashboard")
+        st.page_link("pages/01_Equipos.py", label="🧪 Equipos")
+        st.page_link("pages/02_Hoja_de_Vida.py", label="📘 Hoja de Vida")
+        st.page_link("pages/04_Verificaciones.py", label="✅ Verificaciones")
+
+        if rol_original == "Administrador":
+            st.page_link(
+                "pages/03_Administracion.py",
+                label="⚙️ Administración",
+            )
+
         st.divider()
         st.markdown(f'''
         <div class="sidebar-user">
-            <strong>👤 Usuario: {usuario or 'sin sesión'}</strong><br>
-            <span>Rol: {rol}</span><br><span>🟢 En línea</span>
+            <strong>👤 {usuario or 'Usuario'}</strong><br>
+            <span>Rol: {rol}</span><br>
+            <span>Laboratorio: {laboratorio}</span><br>
+            <span>🟢 Sesión activa</span>
         </div>
         ''', unsafe_allow_html=True)
         st.divider()
-        if st.button('↪ Cerrar sesión', width='stretch'):
-            st.session_state['autenticado'] = False
+
+        if st.button("↪ Cerrar sesión", width="stretch"):
+            cerrar_sesion()
             st.rerun()
 
 
 def login_limpio():
     with st.container(border=True):
-        st.markdown('### 🔐 Ingreso al sistema')
-        usuario = st.text_input('Usuario')
-        clave = st.text_input('Contraseña', type='password')
-        entrar = st.button('Ingresar a PROVICHECK', width='stretch')
-        if entrar:
-            if usuario.strip() and clave.strip():
-                st.session_state['autenticado'] = True
-                st.session_state['usuario'] = usuario.strip()
-                st.session_state.setdefault('rol', 'Administrador')
-                st.rerun()
-            else:
-                st.warning('Ingrese usuario y contraseña.')
+        st.markdown("### 🔐 Ingreso al sistema")
+        usuario = st.text_input(
+            "Usuario",
+            key="login_usuario",
+        )
+        clave = st.text_input(
+            "Contraseña",
+            type="password",
+            key="login_clave",
+        )
+        entrar = st.button(
+            "Ingresar a PROVICHECK",
+            width="stretch",
+            type="primary",
+        )
 
+        if entrar:
+            if not usuario.strip() or not clave.strip():
+                st.warning("Ingrese usuario y contraseña.")
+                return
+
+            datos_usuario, error = _usuario_autorizado(
+                usuario,
+                clave,
+            )
+
+            if error:
+                st.error(error)
+                return
+
+            cerrar_sesion()
+            st.session_state["autenticado"] = True
+            for clave_estado, valor in datos_usuario.items():
+                st.session_state[clave_estado] = valor
+
+            st.success(
+                f"Bienvenido(a), {datos_usuario['nombre_usuario']}."
+            )
+            st.rerun()
 
 def estado_class(estado: str):
     texto = str(estado).strip().lower()
