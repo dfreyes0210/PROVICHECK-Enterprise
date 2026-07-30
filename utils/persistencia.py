@@ -1,4 +1,6 @@
 from datetime import datetime
+from openpyxl import load_workbook
+from config import EXCEL_PATH
 from database import get_connection
 
 
@@ -105,7 +107,10 @@ def guardar_sesion_sqlite(sesion, detalles):
                 )
 
         conn.commit()
-        return True, "Sesión guardada correctamente en SQLite."
+        ok,msg=guardar_verificaciones_excel(sesion,detalles)
+        if not ok:
+            return False,f"SQLite OK, Excel: {msg}"
+        return True,"Sesión guardada correctamente en SQLite y Excel."
 
     except Exception as e:
         conn.rollback()
@@ -113,3 +118,32 @@ def guardar_sesion_sqlite(sesion, detalles):
 
     finally:
         conn.close()
+
+def guardar_verificaciones_excel(sesion, detalles):
+    if not EXCEL_PATH.exists():
+        return False, f"No existe {EXCEL_PATH}"
+    libro=load_workbook(EXCEL_PATH)
+    if "Verificaciones" not in libro.sheetnames:
+        return False,"No existe hoja Verificaciones"
+    ws=libro["Verificaciones"]
+    headers=[c.value for c in ws[1]]
+    idx={str(v).strip():i+1 for i,v in enumerate(headers) if v}
+    def w(r,n,v):
+        if n in idx: ws.cell(row=r,column=idx[n],value=v)
+    for d in detalles:
+        r=ws.max_row+1
+        vals={
+        "id_verificacion":sesion["id_sesion"],"id_sesion":sesion["id_sesion"],
+        "fecha_verificacion":sesion["fecha"],"codigo_equipo":sesion["codigo_equipo"],
+        "nombre_equipo":sesion["nombre_equipo"],"laboratorio":sesion["laboratorio"],
+        "nombre_chequeo":d["nombre_chequeo"],"codigo_patron":d.get("codigo_patron",""),
+        "fecha_vencimiento_patron":d.get("fecha_vencimiento_patron",""),
+        "valor_esperado_g":d["valor_nominal"],"valor_observado_g":d["resultado"],
+        "desviacion_g":d["error"],"limite_inferior_g":d["limite_inferior"],
+        "limite_superior_g":d["limite_superior"],"cumple":d["estado_punto"],
+        "responsable":sesion["responsable"],"observaciones":d["observacion"],
+        "estado_sesion":sesion["estado"],"usuario_login":sesion["responsable"],
+        "fecha_registro":datetime.now().strftime("%Y-%m-%d %H:%M:%S"),"origen":"PROVICHECK"}
+        for k,v in vals.items(): w(r,k,v)
+    libro.save(EXCEL_PATH); libro.close()
+    return True,"OK"
