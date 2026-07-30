@@ -10,6 +10,12 @@ from utils.ui import (
     sidebar_pro,
 )
 from utils.data import cargar_hoja
+from utils.permisos import (
+    obtener_equipos_permitidos,
+    puede_verificar_equipo,
+    obtener_laboratorio_usuario,
+    obtener_rol_usuario,
+)
 from utils.formatos import formatear_numero
 from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
 from utils.diagnostico import generar_diagnostico_sesion
@@ -591,6 +597,19 @@ if puntos.empty:
 equipos = equipos.copy()
 equipos.columns = [str(columna).strip() for columna in equipos.columns]
 
+# Control de autorización:
+# - Administrador/Líder: todos los equipos.
+# - Analista: únicamente equipos de su laboratorio asignado.
+equipos = obtener_equipos_permitidos(equipos)
+
+if equipos.empty:
+    laboratorio_usuario = obtener_laboratorio_usuario()
+    st.error(
+        "No tiene equipos autorizados para realizar verificaciones. "
+        f"Laboratorio asignado: {laboratorio_usuario or 'No informado'}."
+    )
+    st.stop()
+
 puntos = puntos.copy()
 puntos.columns = [str(columna).strip() for columna in puntos.columns]
 
@@ -634,6 +653,21 @@ equipos["descripcion"] = (
     + " · "
     + equipos["nombre_equipo"].astype(str).str.strip()
 )
+
+rol_usuario = obtener_rol_usuario()
+laboratorio_usuario = obtener_laboratorio_usuario()
+
+with st.container(border=True):
+    st.markdown("### 🔐 Alcance de autorización")
+    if rol_usuario in {"Administrador", "Líder"}:
+        st.success(
+            f"{rol_usuario}: puede realizar verificaciones sobre todos los equipos."
+        )
+    else:
+        st.info(
+            "Analista autorizado únicamente para equipos del laboratorio: "
+            f"**{laboratorio_usuario or 'No informado'}**."
+        )
 
 st.markdown("### 1. Modo de captura")
 
@@ -1051,6 +1085,14 @@ guardar = st.button(
 )
 
 if guardar:
+    # Segunda validación de seguridad antes de persistir.
+    # Evita guardar un equipo no autorizado aunque se manipule la interfaz.
+    autorizado, motivo = puede_verificar_equipo(equipo_info)
+
+    if not autorizado:
+        st.error(f"⛔ Verificación bloqueada. {motivo}")
+        st.stop()
+
     id_sesion = generar_id_sesion(codigo_equipo)
 
     sesion = {
