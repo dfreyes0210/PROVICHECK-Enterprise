@@ -17,7 +17,8 @@ from utils.permisos import (
     obtener_rol_usuario,
 )
 from utils.formatos import formatear_numero
-from utils.persistencia import generar_id_sesion, guardar_sesion_sqlite
+from utils.persistencia import generar_id_sesion
+from utils.persistencia_supabase import guardar_sesion_supabase
 from utils.diagnostico import generar_diagnostico_sesion
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
@@ -44,7 +45,7 @@ encabezado()
 st.markdown("## ✅ Motor inteligente de verificación")
 st.caption(
     "Registre verificaciones en tiempo real o incorpore resultados históricos "
-    "manteniendo la trazabilidad completa en SQLite."
+    "manteniendo la trazabilidad permanente en PROVICHECK."
 )
 
 DECIMALES = 4
@@ -1079,7 +1080,7 @@ if not responsable_valido:
     st.warning("Debe ingresar el responsable antes de guardar la verificación.")
 
 guardar = st.button(
-    "💾 Guardar verificación en SQLite",
+    "💾 Guardar verificación en PROVICHECK",
     width="stretch",
     disabled=not (confirmar and responsable_valido),
 )
@@ -1110,7 +1111,7 @@ if guardar:
         "puntos_no_evaluados": no_evaluados,
     }
 
-    ok, mensaje = guardar_sesion_sqlite(sesion, registros)
+    ok, mensaje = guardar_sesion_supabase(sesion, registros)
 
     if ok:
         st.success(f"✅ {mensaje}")
