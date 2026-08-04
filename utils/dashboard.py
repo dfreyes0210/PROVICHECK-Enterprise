@@ -4,7 +4,7 @@ from datetime import date
 import pandas as pd
 
 from utils.data import cargar_hoja
-from utils.sqlite_consultas import (
+from utils.supabase_consultas import (
     consultar_sesiones_verificacion,
     consultar_bitacora_equipo,
 )

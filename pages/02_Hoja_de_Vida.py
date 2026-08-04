@@ -40,7 +40,7 @@ from utils.mantenimientos import (
     registrar_mantenimiento,
     resumen_mantenimientos,
 )
-from utils.sqlite_consultas import (
+from utils.supabase_consultas import (
     consultar_ultima_verificacion,
     consultar_historial_equipo,
     consultar_eventos_equipo,
@@ -442,7 +442,7 @@ with tabs[1]:
     st.markdown("### Última verificación registrada")
 
     if ultima.empty:
-        st.info("Este equipo aún no tiene verificaciones guardadas en SQLite.")
+        st.info("Este equipo aún no tiene verificaciones guardadas en Supabase.")
     else:
         col_a, col_b, col_c, col_d = st.columns(4)
 
