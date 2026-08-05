@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 
 from database import get_connection
+from utils.data import cargar_hoja
+from utils.persistencia_bitacora import registrar_evento_bitacora
 
 
 TIPOS_MANTENIMIENTO = [
@@ -43,6 +45,62 @@ TIPOS_EJECUTOR = [
     "Personal interno",
     "Proveedor externo",
 ]
+
+
+def _texto_seguro(valor: Any, por_defecto: str = "") -> str:
+    if valor is None:
+        return por_defecto
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return por_defecto
+
+    return texto
+
+
+def _normalizar_codigo(valor: Any) -> str:
+    texto = _texto_seguro(valor)
+
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+
+    return texto
+
+
+def _obtener_identidad_equipo(codigo_equipo: str) -> tuple[str, str]:
+    """
+    Recupera nombre y laboratorio desde el Excel maestro.
+    Si el equipo no se encuentra, devuelve textos vacíos sin impedir
+    el registro principal del mantenimiento.
+    """
+    try:
+        equipos = cargar_hoja("Equipos")
+
+        if equipos.empty or "codigo_equipo" not in equipos.columns:
+            return "", ""
+
+        codigo = _normalizar_codigo(codigo_equipo)
+
+        coincidencias = equipos[
+            equipos["codigo_equipo"]
+            .apply(_normalizar_codigo)
+            .eq(codigo)
+        ]
+
+        if coincidencias.empty:
+            return "", ""
+
+        fila = coincidencias.iloc[0]
+
+        return (
+            _texto_seguro(fila.get("nombre_equipo")),
+            _texto_seguro(fila.get("laboratorio")),
+        )
+
+    except Exception:
+        return "", ""
 
 
 def _fecha_iso(valor: Any) -> Optional[str]:
@@ -261,35 +319,62 @@ def registrar_mantenimiento(
 
         mantenimiento_id = int(cur.lastrowid)
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                codigo,
-                f"Mantenimiento {tipo}",
-                (
-                    f"{descripcion_txt} · "
-                    f"Estado: {estado} · "
-                    f"Resultado: {resultado or 'No informado'}"
-                ),
-                str(usuario_registro or responsable or "").strip(),
-                "Mantenimientos",
-            ),
+        conn.commit()
+
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(codigo)
+
+        resultado_txt = _texto_seguro(resultado, "No informado")
+        proveedor_txt = _texto_seguro(proveedor, "No informado")
+        orden_txt = _texto_seguro(numero_orden, "No registrada")
+        componente_txt = _texto_seguro(componente, "No aplica")
+
+        descripcion_bitacora = (
+            f"Tipo: {tipo}. "
+            f"Descripción: {descripcion_txt}. "
+            f"Estado: {estado}. "
+            f"Resultado: {resultado_txt}. "
+            f"Ejecutor: {_texto_seguro(realizado_por_tipo, 'No informado')}. "
+            f"Proveedor: {proveedor_txt}. "
+            f"Orden: {orden_txt}. "
+            f"Componente: {componente_txt}. "
+            f"Horas fuera de servicio: {horas_fuera:.2f}. "
+            f"Costo total: {costo_total:.2f}."
         )
 
-        conn.commit()
+        if resultado_txt == "Equipo fuera de servicio":
+            estado_bitacora = "Error"
+        elif resultado_txt in {
+            "Equipo operativo con observaciones",
+            "Requiere nueva intervención",
+        }:
+            estado_bitacora = "Advertencia"
+        else:
+            estado_bitacora = "Información"
+
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Mantenimiento",
+            evento=f"Mantenimiento {tipo}",
+            descripcion=descripcion_bitacora,
+            usuario=str(
+                usuario_registro or responsable or ""
+            ).strip(),
+            estado=estado_bitacora,
+            origen="Automático",
+            id_referencia=f"MANT-{mantenimiento_id}",
+        )
+
+        if not ok_bitacora:
+            raise RuntimeError(
+                "El mantenimiento se guardó, pero no fue posible "
+                "registrar el evento en la bitácora de Supabase. "
+                f"Detalle: {mensaje_bitacora}"
+            )
+
         return mantenimiento_id
 
     except Exception:
@@ -384,34 +469,39 @@ def eliminar_mantenimiento(
             (int(mantenimiento_id),),
         )
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                fila["codigo_equipo"],
-                "Mantenimiento eliminado",
-                (
-                    f"{fila['tipo_mantenimiento']} · "
-                    f"{fila['descripcion']}"
-                ),
-                str(usuario or "").strip(),
-                "Mantenimientos",
-            ),
+        conn.commit()
+
+        codigo_equipo = str(fila["codigo_equipo"])
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
+            codigo_equipo
         )
 
-        conn.commit()
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo_equipo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Mantenimiento",
+            evento="Mantenimiento eliminado",
+            descripcion=(
+                f"Tipo: {fila['tipo_mantenimiento']}. "
+                f"Descripción: {fila['descripcion']}. "
+                "Registro desactivado lógicamente en PROVICHECK."
+            ),
+            usuario=str(usuario or "").strip(),
+            estado="Acción administrativa",
+            origen="Manual",
+            id_referencia=f"MANT-{int(mantenimiento_id)}",
+        )
+
+        if not ok_bitacora:
+            raise RuntimeError(
+                "El mantenimiento fue desactivado, pero no fue posible "
+                "registrar el evento en la bitácora de Supabase. "
+                f"Detalle: {mensaje_bitacora}"
+            )
+
         return True
 
     except Exception:
