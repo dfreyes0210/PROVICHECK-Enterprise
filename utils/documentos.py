@@ -9,9 +9,67 @@ from uuid import uuid4
 import pandas as pd
 
 from database import get_connection
+from utils.data import cargar_hoja
+from utils.persistencia_bitacora import registrar_evento_bitacora
 
 
 DOCUMENTOS_ROOT = Path("data") / "documentos"
+
+
+def _texto_seguro(valor, por_defecto=""):
+    if valor is None:
+        return por_defecto
+
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return por_defecto
+
+    return texto
+
+
+def _normalizar_codigo(valor):
+    texto = _texto_seguro(valor)
+
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+
+    return texto
+
+
+def _obtener_identidad_equipo(codigo_equipo):
+    """
+    Recupera nombre y laboratorio desde el Excel maestro.
+    Si el equipo no se encuentra, devuelve textos vacíos sin bloquear
+    el registro principal del documento.
+    """
+    try:
+        equipos = cargar_hoja("Equipos")
+
+        if equipos.empty or "codigo_equipo" not in equipos.columns:
+            return "", ""
+
+        codigo = _normalizar_codigo(codigo_equipo)
+
+        coincidencias = equipos[
+            equipos["codigo_equipo"]
+            .apply(_normalizar_codigo)
+            .eq(codigo)
+        ]
+
+        if coincidencias.empty:
+            return "", ""
+
+        fila = coincidencias.iloc[0]
+
+        return (
+            _texto_seguro(fila.get("nombre_equipo")),
+            _texto_seguro(fila.get("laboratorio")),
+        )
+
+    except Exception:
+        return "", ""
 
 
 def _seguro(valor):
@@ -146,31 +204,52 @@ def registrar_documento(
 
         documento_id = cur.lastrowid
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                codigo,
-                "Documento registrado",
-                f"{tipo} - {original}",
-                str(responsable or "").strip(),
-                "Documentos",
-            ),
+        conn.commit()
+
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(codigo)
+
+        descripcion_bitacora = (
+            f"Tipo: {tipo}. "
+            f"Archivo: {original}. "
+            f"Título: {_texto_seguro(titulo, 'Sin título')}. "
+            f"Versión: {_texto_seguro(version, 'No registrada')}. "
+            f"Proveedor o emisor: "
+            f"{_texto_seguro(proveedor, 'No informado')}. "
+            f"Fecha de emisión: {_fecha(fecha_emision) or 'No registrada'}. "
+            f"Fecha de vencimiento: "
+            f"{_fecha(fecha_vencimiento) or 'No aplica'}. "
+            f"Estado documental: {estado}."
         )
 
-        conn.commit()
+        if estado == "Vencido":
+            estado_bitacora = "Error"
+        elif estado == "Próximo a vencer":
+            estado_bitacora = "Advertencia"
+        else:
+            estado_bitacora = "Información"
+
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Documento",
+            evento="Documento registrado",
+            descripcion=descripcion_bitacora,
+            usuario=str(responsable or "").strip(),
+            estado=estado_bitacora,
+            origen="Automático",
+            id_referencia=f"DOC-{documento_id}",
+        )
+
+        if not ok_bitacora:
+            raise RuntimeError(
+                "El documento se guardó, pero no fue posible registrar "
+                "el evento en la bitácora de Supabase. "
+                f"Detalle: {mensaje_bitacora}"
+            )
+
         return documento_id
 
     except Exception:
@@ -283,31 +362,40 @@ def eliminar_documento(documento_id, usuario=""):
             (int(documento_id),),
         )
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                fila["codigo_equipo"],
-                "Documento eliminado",
-                f"{fila['tipo_documento']} - {fila['nombre_archivo']}",
-                str(usuario or "").strip(),
-                "Documentos",
-            ),
+        conn.commit()
+
+        codigo_equipo = str(fila["codigo_equipo"])
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
+            codigo_equipo
         )
 
-        conn.commit()
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo_equipo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Documento",
+            evento="Documento eliminado",
+            descripcion=(
+                f"Tipo: {fila['tipo_documento']}. "
+                f"Archivo: {fila['nombre_archivo']}. "
+                "Registro desactivado lógicamente y archivo físico "
+                "eliminado cuando estuvo disponible."
+            ),
+            usuario=str(usuario or "").strip(),
+            estado="Acción administrativa",
+            origen="Manual",
+            id_referencia=f"DOC-{int(documento_id)}",
+        )
+
+        if not ok_bitacora:
+            raise RuntimeError(
+                "El documento fue desactivado, pero no fue posible "
+                "registrar el evento en la bitácora de Supabase. "
+                f"Detalle: {mensaje_bitacora}"
+            )
+
         Path(fila["ruta_archivo"]).unlink(missing_ok=True)
         return True
 
