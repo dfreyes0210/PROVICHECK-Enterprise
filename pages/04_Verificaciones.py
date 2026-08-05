@@ -1,4 +1,5 @@
 from datetime import date, datetime, time, timedelta
+from html import escape
 from zoneinfo import ZoneInfo
 
 import streamlit as st
@@ -19,6 +20,7 @@ from utils.permisos import (
 from utils.formatos import formatear_numero
 from utils.persistencia import generar_id_sesion
 from utils.persistencia_supabase import guardar_sesion_supabase
+from utils.persistencia_bitacora import registrar_eventos_verificacion
 from utils.diagnostico import generar_diagnostico_sesion
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
@@ -125,6 +127,35 @@ st.markdown(
         font-size: 12px;
         font-weight: 800;
         margin-top: 0.35rem;
+    }
+
+    /* Tarjetas compactas para identificación del equipo */
+    .pc-id-card {
+        background: linear-gradient(180deg, #ffffff 0%, #f7faff 100%);
+        border: 1px solid #cbd8e8;
+        border-top: 3px solid #147a3b;
+        border-radius: 11px;
+        padding: 0.70rem 0.78rem;
+        min-height: 92px;
+        box-shadow: 0 3px 10px rgba(15, 39, 71, 0.05);
+        overflow: hidden;
+    }
+
+    .pc-id-label {
+        color: #506784;
+        font-size: 11px;
+        font-weight: 700;
+        line-height: 1.2;
+        margin-bottom: 0.45rem;
+    }
+
+    .pc-id-value {
+        color: #0f2747;
+        font-size: 17px;
+        font-weight: 800;
+        line-height: 1.22;
+        overflow-wrap: anywhere;
+        word-break: normal;
     }
 
     /* El resultado digitado queda con el mismo tamaño visual de 12 px */
@@ -775,11 +806,37 @@ equipo_info = coincidencias.iloc[0].to_dict()
 
 st.markdown("### 3. Identificación del equipo")
 
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Código", equipo_info.get("codigo_equipo", ""))
-c2.metric("Estado", equipo_info.get("estado", "Sin estado"))
-c3.metric("Laboratorio", equipo_info.get("laboratorio", "Sin laboratorio"))
-c4.metric("Responsable", equipo_info.get("responsable", "Sin responsable"))
+analista_sesion = str(
+    st.session_state.get(
+        "nombre_usuario",
+        st.session_state.get("usuario", "Usuario no identificado"),
+    )
+    or "Usuario no identificado"
+).strip()
+
+identificacion_tarjetas = [
+    ("Código", equipo_info.get("codigo_equipo", "")),
+    ("Estado", equipo_info.get("estado", "Sin estado")),
+    ("Laboratorio", equipo_info.get("laboratorio", "Sin laboratorio")),
+    ("Analista", analista_sesion),
+]
+
+columnas_identificacion = st.columns(4)
+
+for columna_identificacion, (etiqueta, valor) in zip(
+    columnas_identificacion,
+    identificacion_tarjetas,
+):
+    with columna_identificacion:
+        st.markdown(
+            f"""
+            <div class="pc-id-card">
+                <div class="pc-id-label">{escape(str(etiqueta))}</div>
+                <div class="pc-id-value">{escape(str(valor))}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 with st.container(border=True):
     col_a, col_b, col_c = st.columns(3)
@@ -1114,7 +1171,21 @@ if guardar:
     ok, mensaje = guardar_sesion_supabase(sesion, registros)
 
     if ok:
+        ok_bitacora, mensaje_bitacora = registrar_eventos_verificacion(
+            sesion,
+            registros,
+        )
+
         st.success(f"✅ {mensaje}")
+
+        if ok_bitacora:
+            st.info(f"📖 {mensaje_bitacora}")
+        else:
+            st.warning(
+                "La verificación quedó guardada correctamente, "
+                "pero no fue posible actualizar la bitácora. "
+                f"Detalle: {mensaje_bitacora}"
+            )
 
         with st.container(border=True):
             st.markdown("## ✅ Sesión finalizada")
