@@ -6,6 +6,8 @@ from typing import Any
 import pandas as pd
 
 from database import get_connection
+from utils.data import cargar_hoja
+from utils.persistencia_bitacora import registrar_evento_bitacora
 
 
 ESTADOS_RESULTADO = [
@@ -19,6 +21,44 @@ TIPOS_CALIBRACION = [
     "Externa",
     "Interna",
 ]
+
+
+def _texto_seguro(valor: Any, por_defecto: str = "") -> str:
+    if valor is None:
+        return por_defecto
+    texto = str(valor).strip()
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return por_defecto
+    return texto
+
+
+def _normalizar_codigo(valor: Any) -> str:
+    texto = _texto_seguro(valor)
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
+    return texto
+
+
+def _obtener_identidad_equipo(codigo_equipo: str) -> tuple[str, str]:
+    try:
+        equipos = cargar_hoja("Equipos")
+        if equipos.empty or "codigo_equipo" not in equipos.columns:
+            return "", ""
+        codigo = _normalizar_codigo(codigo_equipo)
+        coincidencias = equipos[
+            equipos["codigo_equipo"].apply(_normalizar_codigo).eq(codigo)
+        ]
+        if coincidencias.empty:
+            return "", ""
+        fila = coincidencias.iloc[0]
+        return (
+            _texto_seguro(fila.get("nombre_equipo")),
+            _texto_seguro(fila.get("laboratorio")),
+        )
+    except Exception:
+        return "", ""
 
 
 def _fecha_iso(valor: Any) -> str | None:
@@ -192,35 +232,51 @@ def registrar_calibracion(
 
         calibracion_id = cur.lastrowid
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                codigo,
-                "Calibración registrada",
-                (
-                    f"{tipo} - "
-                    f"{numero_certificado or 'Sin certificado'} - "
-                    f"{resultado_txt}"
-                ),
-                str(usuario_registro or responsable or "").strip(),
-                "Calibraciones",
+        conn.commit()
+
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(codigo)
+
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Calibración",
+            evento="Calibración registrada",
+            descripcion=(
+                f"Tipo: {tipo}. "
+                f"Certificado: {_texto_seguro(numero_certificado, 'Sin certificado')}. "
+                f"Laboratorio ejecutor: "
+                f"{_texto_seguro(laboratorio_calibracion, 'No informado')}. "
+                f"Resultado: {resultado_txt}. "
+                f"Estado de vigencia: {estado}. "
+                f"Fecha de calibración: {fecha_cal}. "
+                f"Próxima calibración: {fecha_proxima or 'No registrada'}."
             ),
+            usuario=str(usuario_registro or responsable or "").strip(),
+            estado=(
+                "Error"
+                if resultado_txt == "Rechazada"
+                else (
+                    "Advertencia"
+                    if resultado_txt in {
+                        "Condicionada",
+                        "Aprobada con observaciones",
+                    }
+                    else "Información"
+                )
+            ),
+            origen="Automático",
+            id_referencia=f"CAL-{calibracion_id}",
         )
 
-        conn.commit()
+        if not ok_bitacora:
+            raise RuntimeError(
+                "La calibración se guardó, pero no fue posible registrar "
+                f"el evento en la bitácora: {mensaje_bitacora}"
+            )
+
         return int(calibracion_id)
 
     except Exception:
@@ -366,34 +422,39 @@ def eliminar_calibracion(
             (int(calibracion_id),),
         )
 
-        cur.execute(
-            """
-            INSERT INTO bitacora (
-                fecha,
-                hora,
-                codigo_equipo,
-                evento,
-                detalle,
-                usuario,
-                origen
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                fila["codigo_equipo"],
-                "Calibración eliminada",
-                (
-                    f"{fila['tipo_calibracion']} - "
-                    f"{fila['numero_certificado'] or 'Sin certificado'}"
-                ),
-                str(usuario or "").strip(),
-                "Calibraciones",
-            ),
+        conn.commit()
+
+        codigo_equipo = str(fila["codigo_equipo"])
+        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
+            codigo_equipo
         )
 
-        conn.commit()
+        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+            fecha=ahora.date(),
+            hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=codigo_equipo,
+            nombre_equipo=nombre_equipo,
+            laboratorio=laboratorio_equipo,
+            categoria="Calibración",
+            evento="Calibración eliminada",
+            descripcion=(
+                f"Tipo: {fila['tipo_calibracion']}. "
+                f"Certificado: "
+                f"{fila['numero_certificado'] or 'Sin certificado'}. "
+                "Registro desactivado lógicamente en PROVICHECK."
+            ),
+            usuario=str(usuario or "").strip(),
+            estado="Acción administrativa",
+            origen="Manual",
+            id_referencia=f"CAL-{int(calibracion_id)}",
+        )
+
+        if not ok_bitacora:
+            raise RuntimeError(
+                "La calibración fue desactivada, pero no fue posible "
+                f"registrar el evento en la bitácora: {mensaje_bitacora}"
+            )
+
         return True
 
     except Exception:
