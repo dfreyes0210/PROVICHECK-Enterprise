@@ -151,7 +151,7 @@ def obtener_estado_verificaciones():
 
 
 def _tipo_frecuencia_periodo(valor):
-    texto = _normalizar_texto(valor)
+    texto = _txt(valor).lower()
 
     if not texto or texto in {"nan", "none", "sin definir"}:
         return "sin_frecuencia"
