@@ -150,72 +150,501 @@ def obtener_estado_verificaciones():
             .groupby("estado").size().reset_index(name="cantidad"))
 
 
+def _tipo_frecuencia_periodo(valor):
+    texto = _normalizar_texto(valor)
+
+    if not texto or texto in {"nan", "none", "sin definir"}:
+        return "sin_frecuencia"
+
+    reglas = [
+        ("diaria", ["diaria", "diario", "cada día", "cada dia"]),
+        ("semanal", ["semanal", "cada semana"]),
+        ("quincenal", ["quincenal", "cada quincena"]),
+        ("mensual", ["mensual", "cada mes"]),
+        ("bimestral", ["bimestral", "cada 2 meses"]),
+        ("trimestral", ["trimestral", "cada 3 meses"]),
+        ("cuatrimestral", ["cuatrimestral", "cada 4 meses"]),
+        ("semestral", ["semestral", "cada 6 meses"]),
+        ("anual", ["anual", "cada año", "cada ano"]),
+    ]
+
+    for tipo, expresiones in reglas:
+        if any(expresion in texto for expresion in expresiones):
+            return tipo
+
+    if re.search(r"\d+", texto):
+        return "intervalo"
+
+    return "sin_frecuencia"
+
+
+def _periodo_actual(tipo, hoy=None):
+    hoy = pd.Timestamp(hoy or _ahora().date()).normalize()
+    anio = hoy.year
+    mes = hoy.month
+
+    if tipo == "diaria":
+        inicio = fin = hoy
+        etiqueta = hoy.strftime("%d/%m/%Y")
+
+    elif tipo == "semanal":
+        inicio = hoy - pd.Timedelta(days=hoy.weekday())
+        fin = inicio + pd.Timedelta(days=6)
+        semana = int(hoy.isocalendar().week)
+        etiqueta = f"Semana {semana} de {anio}"
+
+    elif tipo == "quincenal":
+        if hoy.day <= 15:
+            inicio = pd.Timestamp(anio, mes, 1)
+            fin = pd.Timestamp(anio, mes, 15)
+            etiqueta = f"1.ª quincena {hoy.strftime('%m/%Y')}"
+        else:
+            inicio = pd.Timestamp(anio, mes, 16)
+            fin = pd.Timestamp(anio, mes, 1) + pd.offsets.MonthEnd(1)
+            etiqueta = f"2.ª quincena {hoy.strftime('%m/%Y')}"
+
+    elif tipo == "mensual":
+        inicio = pd.Timestamp(anio, mes, 1)
+        fin = inicio + pd.offsets.MonthEnd(1)
+        etiqueta = hoy.strftime("%B %Y").capitalize()
+
+    elif tipo in {"bimestral", "trimestral", "cuatrimestral", "semestral"}:
+        meses_periodo = {
+            "bimestral": 2,
+            "trimestral": 3,
+            "cuatrimestral": 4,
+            "semestral": 6,
+        }[tipo]
+        bloque = (mes - 1) // meses_periodo
+        mes_inicio = bloque * meses_periodo + 1
+        inicio = pd.Timestamp(anio, mes_inicio, 1)
+        fin = inicio + pd.DateOffset(months=meses_periodo) - pd.Timedelta(days=1)
+        numero = bloque + 1
+        nombres = {
+            "bimestral": "Bimestre",
+            "trimestral": "Trimestre",
+            "cuatrimestral": "Cuatrimestre",
+            "semestral": "Semestre",
+        }
+        etiqueta = f"{nombres[tipo]} {numero} de {anio}"
+
+    elif tipo == "anual":
+        inicio = pd.Timestamp(anio, 1, 1)
+        fin = pd.Timestamp(anio, 12, 31)
+        etiqueta = str(anio)
+
+    else:
+        return pd.NaT, pd.NaT, "Sin período"
+
+    return inicio.normalize(), pd.Timestamp(fin).normalize(), etiqueta
+
+
 def obtener_proximas_verificaciones():
+    """
+    Evalúa el cumplimiento por período calendario, no por suma fija de días.
+
+    Ejemplos:
+    - Mensual: una verificación en cualquier fecha del mes actual.
+    - Trimestral: una verificación en cualquier fecha del trimestre actual.
+    - Semestral: una verificación en cualquier fecha del semestre actual.
+    """
     equipos = _equipos()
     sesiones = consultar_sesiones_verificacion(100000)
+
     if equipos.empty:
         return pd.DataFrame()
+
     c_codigo = _buscar_columna(equipos, ["codigo_equipo", "codigo"])
     c_nombre = _buscar_columna(equipos, ["nombre_equipo", "nombre", "equipo"])
     c_lab = _buscar_columna(equipos, ["laboratorio"])
-    c_frec = _buscar_columna(equipos, ["frecuencia_verificacion", "frecuencia"])
+    c_frec = _buscar_columna(
+        equipos,
+        ["frecuencia_verificacion", "frecuencia"],
+    )
+
     if c_codigo is None:
         return pd.DataFrame()
+
     salida = pd.DataFrame({
         "codigo_equipo": equipos[c_codigo].apply(_codigo),
-        "nombre_equipo": equipos[c_nombre].fillna("Sin nombre").astype(str) if c_nombre else "Sin nombre",
-        "laboratorio": equipos[c_lab].fillna("Sin laboratorio").astype(str) if c_lab else "Sin laboratorio",
-        "frecuencia": equipos[c_frec].fillna("Sin definir").astype(str) if c_frec else "Sin definir",
+        "nombre_equipo": (
+            equipos[c_nombre].fillna("Sin nombre").astype(str)
+            if c_nombre is not None else "Sin nombre"
+        ),
+        "laboratorio": (
+            equipos[c_lab].fillna("Sin laboratorio").astype(str)
+            if c_lab is not None else "Sin laboratorio"
+        ),
+        "frecuencia": (
+            equipos[c_frec].fillna("Sin definir").astype(str)
+            if c_frec is not None else "Sin definir"
+        ),
     })
+
+    salida["tipo_periodo"] = salida["frecuencia"].apply(
+        _tipo_frecuencia_periodo
+    )
+
+    hoy = pd.Timestamp(_ahora().date()).normalize()
+
+    periodos = salida["tipo_periodo"].apply(
+        lambda tipo: _periodo_actual(tipo, hoy)
+    )
+    salida["inicio_periodo"] = periodos.apply(lambda x: x[0])
+    salida["fin_periodo"] = periodos.apply(lambda x: x[1])
+    salida["periodo"] = periodos.apply(lambda x: x[2])
+
     salida["ultima_verificacion"] = pd.NaT
-    if not sesiones.empty and "codigo_equipo" in sesiones.columns and "fecha" in sesiones.columns:
-        hist = sesiones[["codigo_equipo", "fecha"]].copy()
-        hist["codigo_equipo"] = hist["codigo_equipo"].apply(_codigo)
-        hist["fecha"] = pd.to_datetime(hist["fecha"], errors="coerce", dayfirst=True)
-        ultimas = hist.dropna(subset=["fecha"]).groupby("codigo_equipo")["fecha"].max()
+    salida["fecha_cumplimiento"] = pd.NaT
+    salida["responsable_cumplimiento"] = ""
+
+    if (
+        not sesiones.empty
+        and "codigo_equipo" in sesiones.columns
+        and "fecha" in sesiones.columns
+    ):
+        historial = sesiones.copy()
+        historial["codigo_equipo"] = historial["codigo_equipo"].apply(_codigo)
+        historial["fecha_dt"] = pd.to_datetime(
+            historial["fecha"],
+            errors="coerce",
+            dayfirst=True,
+        ).dt.normalize()
+        historial = historial.dropna(subset=["fecha_dt"])
+
+        ultimas = (
+            historial.groupby("codigo_equipo")["fecha_dt"]
+            .max()
+        )
         salida["ultima_verificacion"] = salida["codigo_equipo"].map(ultimas)
-    salida["dias_frecuencia"] = salida["frecuencia"].apply(_frecuencia_a_dias)
-    salida["proxima_verificacion"] = salida.apply(
-        lambda f: f["ultima_verificacion"] + pd.to_timedelta(f["dias_frecuencia"], unit="D")
-        if pd.notna(f["ultima_verificacion"]) and pd.notna(f["dias_frecuencia"]) else pd.NaT,
+
+        def cumplimiento_equipo(fila):
+            tipo = fila["tipo_periodo"]
+            codigo = fila["codigo_equipo"]
+
+            if tipo == "sin_frecuencia":
+                return pd.NaT, ""
+
+            registros = historial[
+                historial["codigo_equipo"].eq(codigo)
+            ].copy()
+
+            if registros.empty:
+                return pd.NaT, ""
+
+            if tipo == "intervalo":
+                ultima = registros.sort_values(
+                    "fecha_dt",
+                    ascending=False,
+                ).iloc[0]
+                return (
+                    ultima["fecha_dt"],
+                    str(ultima.get("responsable", "") or ""),
+                )
+
+            inicio = fila["inicio_periodo"]
+            fin = fila["fin_periodo"]
+
+            registros = registros[
+                registros["fecha_dt"].between(inicio, fin)
+            ]
+
+            if registros.empty:
+                return pd.NaT, ""
+
+            ultimo = registros.sort_values(
+                ["fecha_dt", "hora"] if "hora" in registros.columns else ["fecha_dt"],
+                ascending=False,
+            ).iloc[0]
+
+            return (
+                ultimo["fecha_dt"],
+                str(ultimo.get("responsable", "") or ""),
+            )
+
+        cumplimientos = salida.apply(cumplimiento_equipo, axis=1)
+        salida["fecha_cumplimiento"] = cumplimientos.apply(lambda x: x[0])
+        salida["responsable_cumplimiento"] = cumplimientos.apply(lambda x: x[1])
+
+    def estado_periodo(fila):
+        tipo = fila["tipo_periodo"]
+
+        if tipo == "sin_frecuencia":
+            return "⚪ Sin frecuencia"
+
+        if tipo == "intervalo":
+            dias = _frecuencia_a_dias(fila["frecuencia"])
+            ultima = fila["ultima_verificacion"]
+
+            if dias is None:
+                return "⚪ Sin frecuencia"
+            if pd.isna(ultima):
+                return "🔴 Sin verificar"
+
+            proxima = ultima + pd.Timedelta(days=dias)
+            return (
+                "🟢 Cumplido"
+                if proxima >= hoy
+                else "🔴 Vencido por intervalo"
+            )
+
+        return (
+            "🟢 Cumplido"
+            if pd.notna(fila["fecha_cumplimiento"])
+            else "🟡 Pendiente del período"
+        )
+
+    salida["estado_programacion"] = salida.apply(
+        estado_periodo,
         axis=1,
     )
-    hoy = pd.Timestamp(_ahora().date())
-    def estado(f):
-        if pd.isna(f["dias_frecuencia"]): return "⚪ Sin frecuencia"
-        if pd.isna(f["ultima_verificacion"]): return "🔴 Sin verificar"
-        dias = int((f["proxima_verificacion"].normalize() - hoy).days)
-        if dias < 0: return "🔴 Vencida"
-        if dias <= 7: return "🟡 Próxima"
-        return "🟢 Vigente"
-    salida["estado_programacion"] = salida.apply(estado, axis=1)
-    salida["dias_estado"] = salida.apply(
-        lambda f: int((f["proxima_verificacion"].normalize() - hoy).days)
-        if pd.notna(f["proxima_verificacion"]) else None, axis=1)
-    orden = {"🔴 Vencida":1, "🔴 Sin verificar":2, "🟡 Próxima":3, "🟢 Vigente":4, "⚪ Sin frecuencia":5}
+
+    salida["dias_restantes_periodo"] = salida.apply(
+        lambda fila: (
+            int((fila["fin_periodo"] - hoy).days)
+            if pd.notna(fila["fin_periodo"])
+            else None
+        ),
+        axis=1,
+    )
+
+    orden = {
+        "🔴 Vencido por intervalo": 1,
+        "🔴 Sin verificar": 2,
+        "🟡 Pendiente del período": 3,
+        "🟢 Cumplido": 4,
+        "⚪ Sin frecuencia": 5,
+    }
     salida["orden"] = salida["estado_programacion"].map(orden).fillna(9)
-    return salida.sort_values(["orden", "proxima_verificacion", "codigo_equipo"], na_position="last").drop(columns=["dias_frecuencia", "orden"]).reset_index(drop=True)
+
+    return (
+        salida.sort_values(
+            ["orden", "laboratorio", "codigo_equipo"],
+            na_position="last",
+        )
+        .drop(columns=["orden"])
+        .reset_index(drop=True)
+    )
 
 
 def obtener_resumen_programacion():
-    p = obtener_proximas_verificaciones()
-    r = {"vigentes":0, "proximas":0, "vencidas":0, "sin_verificar":0, "sin_frecuencia":0}
-    if p.empty: return r
-    e = p["estado_programacion"].astype(str)
-    r["vigentes"] = int(e.str.contains("Vigente", na=False).sum())
-    r["proximas"] = int(e.str.contains("Próxima", na=False).sum())
-    r["vencidas"] = int(e.str.contains("Vencida", na=False).sum())
-    r["sin_verificar"] = int(e.str.contains("Sin verificar", na=False).sum())
-    r["sin_frecuencia"] = int(e.str.contains("Sin frecuencia", na=False).sum())
-    return r
+    programacion = obtener_proximas_verificaciones()
+
+    resumen = {
+        "programados": 0,
+        "cumplidos": 0,
+        "pendientes": 0,
+        "vencidos_intervalo": 0,
+        "sin_verificar": 0,
+        "sin_frecuencia": 0,
+        "porcentaje_cumplimiento": 0.0,
+        # Compatibilidad con la Dashboard anterior
+        "vigentes": 0,
+        "proximas": 0,
+        "vencidas": 0,
+    }
+
+    if programacion.empty:
+        return resumen
+
+    estados = programacion["estado_programacion"].astype(str)
+
+    resumen["cumplidos"] = int(
+        estados.str.contains("Cumplido", na=False).sum()
+    )
+    resumen["pendientes"] = int(
+        estados.str.contains("Pendiente del período", na=False).sum()
+    )
+    resumen["vencidos_intervalo"] = int(
+        estados.str.contains("Vencido por intervalo", na=False).sum()
+    )
+    resumen["sin_verificar"] = int(
+        estados.str.contains("Sin verificar", na=False).sum()
+    )
+    resumen["sin_frecuencia"] = int(
+        estados.str.contains("Sin frecuencia", na=False).sum()
+    )
+    resumen["programados"] = (
+        resumen["cumplidos"]
+        + resumen["pendientes"]
+        + resumen["vencidos_intervalo"]
+        + resumen["sin_verificar"]
+    )
+
+    if resumen["programados"] > 0:
+        resumen["porcentaje_cumplimiento"] = round(
+            resumen["cumplidos"]
+            / resumen["programados"]
+            * 100,
+            1,
+        )
+
+    resumen["vigentes"] = resumen["cumplidos"]
+    resumen["proximas"] = resumen["pendientes"]
+    resumen["vencidas"] = resumen["vencidos_intervalo"]
+
+    return resumen
 
 
 def obtener_agenda_critica(limite=20):
-    p = obtener_proximas_verificaciones()
-    if p.empty: return p
-    p = p[p["estado_programacion"].isin({"🔴 Vencida", "🔴 Sin verificar", "🟡 Próxima"})]
-    cols = [c for c in ["codigo_equipo","nombre_equipo","laboratorio","frecuencia","ultima_verificacion","proxima_verificacion","dias_estado","estado_programacion"] if c in p.columns]
-    return p[cols].head(limite).reset_index(drop=True)
+    programacion = obtener_proximas_verificaciones()
+
+    if programacion.empty:
+        return programacion
+
+    estados_prioritarios = {
+        "🔴 Vencido por intervalo",
+        "🔴 Sin verificar",
+        "🟡 Pendiente del período",
+    }
+
+    agenda = programacion[
+        programacion["estado_programacion"].isin(estados_prioritarios)
+    ].copy()
+
+    columnas = [
+        columna
+        for columna in [
+            "codigo_equipo",
+            "nombre_equipo",
+            "laboratorio",
+            "frecuencia",
+            "periodo",
+            "ultima_verificacion",
+            "fin_periodo",
+            "dias_restantes_periodo",
+            "estado_programacion",
+        ]
+        if columna in agenda.columns
+    ]
+
+    return agenda[columnas].head(limite).reset_index(drop=True)
+
+
+def obtener_equipos_pendientes_periodo(limite=1000):
+    programacion = obtener_proximas_verificaciones()
+
+    if programacion.empty:
+        return programacion
+
+    pendientes = programacion[
+        programacion["estado_programacion"].isin(
+            {
+                "🟡 Pendiente del período",
+                "🔴 Vencido por intervalo",
+                "🔴 Sin verificar",
+            }
+        )
+    ].copy()
+
+    columnas = [
+        columna
+        for columna in [
+            "codigo_equipo",
+            "nombre_equipo",
+            "laboratorio",
+            "frecuencia",
+            "periodo",
+            "ultima_verificacion",
+            "fin_periodo",
+            "dias_restantes_periodo",
+            "estado_programacion",
+        ]
+        if columna in pendientes.columns
+    ]
+
+    return pendientes[columnas].head(limite).reset_index(drop=True)
+
+
+def obtener_equipos_cumplidos_periodo(limite=1000):
+    programacion = obtener_proximas_verificaciones()
+
+    if programacion.empty:
+        return programacion
+
+    cumplidos = programacion[
+        programacion["estado_programacion"].eq("🟢 Cumplido")
+    ].copy()
+
+    columnas = [
+        columna
+        for columna in [
+            "codigo_equipo",
+            "nombre_equipo",
+            "laboratorio",
+            "frecuencia",
+            "periodo",
+            "fecha_cumplimiento",
+            "responsable_cumplimiento",
+            "estado_programacion",
+        ]
+        if columna in cumplidos.columns
+    ]
+
+    return cumplidos[columnas].head(limite).reset_index(drop=True)
+
+
+def obtener_cumplimiento_laboratorios():
+    programacion = obtener_proximas_verificaciones()
+
+    columnas = [
+        "laboratorio",
+        "programados",
+        "cumplidos",
+        "pendientes",
+        "porcentaje_cumplimiento",
+        "estado_laboratorio",
+    ]
+
+    if programacion.empty:
+        return pd.DataFrame(columns=columnas)
+
+    evaluables = programacion[
+        ~programacion["estado_programacion"].eq("⚪ Sin frecuencia")
+    ].copy()
+
+    if evaluables.empty:
+        return pd.DataFrame(columns=columnas)
+
+    evaluables["cumplido"] = evaluables[
+        "estado_programacion"
+    ].eq("🟢 Cumplido")
+
+    resumen = (
+        evaluables.groupby("laboratorio", dropna=False)
+        .agg(
+            programados=("codigo_equipo", "size"),
+            cumplidos=("cumplido", "sum"),
+        )
+        .reset_index()
+    )
+    resumen["cumplidos"] = resumen["cumplidos"].astype(int)
+    resumen["pendientes"] = (
+        resumen["programados"] - resumen["cumplidos"]
+    )
+    resumen["porcentaje_cumplimiento"] = (
+        resumen["cumplidos"]
+        / resumen["programados"]
+        * 100
+    ).round(1)
+    resumen["estado_laboratorio"] = resumen.apply(
+        lambda fila: (
+            "🟢 100 % ejecutado"
+            if fila["porcentaje_cumplimiento"] == 100
+            else (
+                "🟡 En ejecución"
+                if fila["porcentaje_cumplimiento"] >= 70
+                else "🔴 Requiere atención"
+            )
+        ),
+        axis=1,
+    )
+
+    return resumen[columnas].sort_values(
+        ["porcentaje_cumplimiento", "laboratorio"],
+        ascending=[False, True],
+    ).reset_index(drop=True)
+
 
 
 def obtener_patrones_alerta(dias_alerta=30, limite=20):
