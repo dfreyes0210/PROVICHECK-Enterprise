@@ -81,24 +81,66 @@ def consultar_eventos_equipo(codigo_equipo, limite=20):
     return consultar_bitacora_equipo(codigo_equipo, limite)
 
 def consultar_documentos_equipo(codigo_equipo, incluir_inactivos=False):
-    conn = get_connection()
-    filtro = "" if incluir_inactivos else "AND activo = 1"
+    columnas = [
+        "id",
+        "codigo_equipo",
+        "tipo_documento",
+        "titulo",
+        "nombre_archivo",
+        "ruta_archivo",
+        "bucket",
+        "mime_type",
+        "tamano_bytes",
+        "fecha_carga",
+        "hora_carga",
+        "fecha_emision",
+        "fecha_vencimiento",
+        "responsable",
+        "proveedor",
+        "version",
+        "observaciones",
+        "estado",
+        "usuario_registro",
+        "activo",
+        "creado_en",
+    ]
+
     try:
-        return pd.read_sql_query(
-            f"""SELECT * FROM documentos_equipo
-            WHERE codigo_equipo = ? {filtro}
-            ORDER BY fecha_carga DESC, hora_carga DESC, id DESC""",
-            conn, params=(str(codigo_equipo),)
+        consulta = (
+            obtener_cliente_supabase()
+            .table("documentos_equipo")
+            .select("*")
+            .eq("codigo_equipo", str(codigo_equipo).strip())
         )
-    finally:
-        conn.close()
+
+        if not incluir_inactivos:
+            consulta = consulta.eq("activo", True)
+
+        respuesta = (
+            consulta.order("fecha_carga", desc=True)
+            .order("hora_carga", desc=True)
+            .order("id", desc=True)
+            .execute()
+        )
+
+        return _df(respuesta.data, columnas)
+
+    except Exception:
+        return pd.DataFrame(columns=columnas)
+
 
 def consultar_documento_por_id(documento_id):
-    conn = get_connection()
     try:
-        return pd.read_sql_query(
-            "SELECT * FROM documentos_equipo WHERE id = ? LIMIT 1",
-            conn, params=(int(documento_id),)
+        respuesta = (
+            obtener_cliente_supabase()
+            .table("documentos_equipo")
+            .select("*")
+            .eq("id", int(documento_id))
+            .limit(1)
+            .execute()
         )
-    finally:
-        conn.close()
+
+        return _df(respuesta.data, [])
+
+    except Exception:
+        return pd.DataFrame()
