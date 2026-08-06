@@ -4,19 +4,33 @@ import mimetypes
 import re
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from database import get_connection
 from utils.data import cargar_hoja
 from utils.persistencia_bitacora import registrar_evento_bitacora
+from utils.supabase_client import obtener_cliente_supabase
 
 
-DOCUMENTOS_ROOT = Path("data") / "documentos"
+BUCKET_DOCUMENTOS = "documentos-equipos"
+LIMITE_ARCHIVO_BYTES = 20 * 1024 * 1024
+ZONA_COLOMBIA = ZoneInfo("America/Bogota")
 
 
-def _texto_seguro(valor, por_defecto=""):
+def _ahora_colombia() -> datetime:
+    return datetime.now(ZONA_COLOMBIA)
+
+
+def _seguro(valor: Any) -> str:
+    """Convierte textos en nombres seguros para rutas de Storage."""
+    texto = re.sub(r"[^\w\-. ]", "_", str(valor or "").strip())
+    return re.sub(r"\s+", "_", texto) or "sin_nombre"
+
+
+def _texto_seguro(valor: Any, por_defecto: str = "") -> str:
     if valor is None:
         return por_defecto
 
@@ -27,7 +41,7 @@ def _texto_seguro(valor, por_defecto=""):
     return texto
 
 
-def _normalizar_codigo(valor):
+def _normalizar_codigo(valor: Any) -> str:
     texto = _texto_seguro(valor)
 
     if texto.endswith(".0"):
@@ -38,12 +52,23 @@ def _normalizar_codigo(valor):
     return texto
 
 
-def _obtener_identidad_equipo(codigo_equipo):
-    """
-    Recupera nombre y laboratorio desde el Excel maestro.
-    Si el equipo no se encuentra, devuelve textos vacíos sin bloquear
-    el registro principal del documento.
-    """
+def _fecha(valor: Any) -> str | None:
+    """Normaliza fechas al formato ISO YYYY-MM-DD."""
+    if valor in (None, ""):
+        return None
+
+    if isinstance(valor, datetime):
+        return valor.date().isoformat()
+
+    if isinstance(valor, date):
+        return valor.isoformat()
+
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _obtener_identidad_equipo(codigo_equipo: str) -> tuple[str, str]:
+    """Recupera nombre y laboratorio desde el Excel maestro."""
     try:
         equipos = cargar_hoja("Equipos")
 
@@ -72,38 +97,48 @@ def _obtener_identidad_equipo(codigo_equipo):
         return "", ""
 
 
-def _seguro(valor):
-    """Convierte textos en nombres seguros para carpetas y archivos."""
-    texto = re.sub(r"[^\w\-. ]", "_", str(valor or "").strip())
-    return re.sub(r"\s+", "_", texto) or "sin_nombre"
+def _bytes_archivo(archivo_subido) -> bytes:
+    if hasattr(archivo_subido, "getvalue"):
+        contenido = archivo_subido.getvalue()
+    elif hasattr(archivo_subido, "getbuffer"):
+        contenido = bytes(archivo_subido.getbuffer())
+    else:
+        contenido = bytes(archivo_subido)
+
+    if not contenido:
+        raise ValueError("El archivo seleccionado está vacío.")
+
+    if len(contenido) > LIMITE_ARCHIVO_BYTES:
+        raise ValueError(
+            "El archivo supera el límite permitido de 20 MB."
+        )
+
+    return contenido
 
 
-def _fecha(valor):
-    """Normaliza fechas a formato ISO YYYY-MM-DD."""
-    if valor in (None, ""):
-        return None
-    if isinstance(valor, datetime):
-        return valor.date().isoformat()
-    if isinstance(valor, date):
-        return valor.isoformat()
-    texto = str(valor).strip()
-    return texto or None
-
-
-def calcular_estado(fecha_vencimiento, dias_alerta=30):
-    """Calcula el estado documental según su fecha de vencimiento."""
+def calcular_estado(
+    fecha_vencimiento: Any,
+    dias_alerta: int = 30,
+) -> str:
+    """Calcula el estado documental según su vencimiento."""
     fecha_txt = _fecha(fecha_vencimiento)
+
     if not fecha_txt:
         return "Sin vencimiento"
+
     try:
         vencimiento = date.fromisoformat(fecha_txt)
     except ValueError:
         return "Fecha inválida"
+
     dias = (vencimiento - date.today()).days
+
     if dias < 0:
         return "Vencido"
+
     if dias <= int(dias_alerta):
         return "Próximo a vencer"
+
     return "Vigente"
 
 
@@ -119,32 +154,34 @@ def registrar_documento(
     version="",
     observaciones="",
 ):
-    """Guarda el archivo físico y registra su información en SQLite."""
+    """
+    Carga el archivo al bucket privado de Supabase Storage y registra
+    sus metadatos en public.documentos_equipo.
+    """
     if archivo_subido is None:
         raise ValueError("Debe seleccionar un archivo.")
 
-    codigo = str(codigo_equipo or "").strip()
+    codigo = _normalizar_codigo(codigo_equipo)
+    tipo = _texto_seguro(tipo_documento)
+
     if not codigo:
         raise ValueError("Debe indicar el código del equipo.")
 
-    tipo = str(tipo_documento or "").strip()
     if not tipo:
         raise ValueError("Debe indicar el tipo de documento.")
 
-    carpeta = DOCUMENTOS_ROOT / _seguro(codigo)
-    carpeta.mkdir(parents=True, exist_ok=True)
+    emision = _fecha(fecha_emision)
+    vencimiento = _fecha(fecha_vencimiento)
+
+    if emision and vencimiento and vencimiento < emision:
+        raise ValueError(
+            "La fecha de vencimiento no puede ser anterior "
+            "a la fecha de emisión."
+        )
 
     original = Path(archivo_subido.name).name
     extension = Path(original).suffix.lower()
-    nombre_guardado = (
-        f"{datetime.now():%Y%m%d_%H%M%S}_"
-        f"{uuid4().hex[:8]}_"
-        f"{_seguro(Path(original).stem)}"
-        f"{extension}"
-    )
-
-    destino = carpeta / nombre_guardado
-    destino.write_bytes(archivo_subido.getbuffer())
+    contenido = _bytes_archivo(archivo_subido)
 
     mime = (
         getattr(archivo_subido, "type", None)
@@ -152,305 +189,367 @@ def registrar_documento(
         or "application/octet-stream"
     )
 
-    ahora = datetime.now()
-    estado = calcular_estado(fecha_vencimiento)
+    ahora = _ahora_colombia()
+    nombre_guardado = (
+        f"{ahora:%Y%m%d_%H%M%S}_"
+        f"{uuid4().hex[:8]}_"
+        f"{_seguro(Path(original).stem)}"
+        f"{extension}"
+    )
+    ruta_storage = f"{_seguro(codigo)}/{nombre_guardado}"
+    estado = calcular_estado(vencimiento)
 
-    conn = get_connection()
-    cur = conn.cursor()
+    cliente = obtener_cliente_supabase()
+    bucket = cliente.storage.from_(BUCKET_DOCUMENTOS)
 
     try:
-        cur.execute(
-            """
-            INSERT INTO documentos_equipo (
-                codigo_equipo,
-                tipo_documento,
-                titulo,
-                nombre_archivo,
-                ruta_archivo,
-                mime_type,
-                tamano_bytes,
-                fecha_carga,
-                hora_carga,
-                fecha_emision,
-                fecha_vencimiento,
-                responsable,
-                proveedor,
-                version,
-                observaciones,
-                estado,
-                activo
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
-            """,
-            (
-                codigo,
-                tipo,
-                str(titulo or "").strip(),
-                original,
-                str(destino),
-                mime,
-                destino.stat().st_size,
-                ahora.date().isoformat(),
-                ahora.strftime("%H:%M:%S"),
-                _fecha(fecha_emision),
-                _fecha(fecha_vencimiento),
-                str(responsable or "").strip(),
-                str(proveedor or "").strip(),
-                str(version or "").strip(),
-                str(observaciones or "").strip(),
-                estado,
-            ),
+        bucket.upload(
+            path=ruta_storage,
+            file=contenido,
+            file_options={
+                "content-type": mime,
+                "upsert": "false",
+            },
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "No fue posible cargar el archivo en Supabase Storage. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    registro = {
+        "codigo_equipo": codigo,
+        "tipo_documento": tipo,
+        "titulo": _texto_seguro(titulo),
+        "nombre_archivo": original,
+        "ruta_archivo": ruta_storage,
+        "bucket": BUCKET_DOCUMENTOS,
+        "mime_type": mime,
+        "tamano_bytes": len(contenido),
+        "fecha_carga": ahora.date().isoformat(),
+        "hora_carga": ahora.strftime("%H:%M:%S"),
+        "fecha_emision": emision,
+        "fecha_vencimiento": vencimiento,
+        "responsable": _texto_seguro(responsable),
+        "proveedor": _texto_seguro(proveedor),
+        "version": _texto_seguro(version),
+        "observaciones": _texto_seguro(observaciones),
+        "estado": estado,
+        "usuario_registro": _texto_seguro(responsable),
+        "activo": True,
+    }
+
+    try:
+        respuesta = (
+            cliente.table("documentos_equipo")
+            .insert(registro)
+            .execute()
+        )
+    except Exception as exc:
+        try:
+            bucket.remove([ruta_storage])
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "El archivo se cargó temporalmente, pero no fue posible "
+            "registrar sus metadatos en Supabase. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    datos = respuesta.data or []
+
+    if not datos:
+        try:
+            bucket.remove([ruta_storage])
+        except Exception:
+            pass
+
+        raise RuntimeError(
+            "Supabase no confirmó el registro del documento."
         )
 
-        documento_id = cur.lastrowid
+    documento_id = int(datos[0]["id"])
+    nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
+        codigo
+    )
 
-        conn.commit()
+    if estado == "Vencido":
+        estado_bitacora = "Error"
+    elif estado == "Próximo a vencer":
+        estado_bitacora = "Advertencia"
+    else:
+        estado_bitacora = "Información"
 
-        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(codigo)
-
-        descripcion_bitacora = (
+    ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+        fecha=ahora.date(),
+        hora=ahora.time().replace(microsecond=0),
+        codigo_equipo=codigo,
+        nombre_equipo=nombre_equipo,
+        laboratorio=laboratorio_equipo,
+        categoria="Documento",
+        evento="Documento registrado",
+        descripcion=(
             f"Tipo: {tipo}. "
             f"Archivo: {original}. "
             f"Título: {_texto_seguro(titulo, 'Sin título')}. "
             f"Versión: {_texto_seguro(version, 'No registrada')}. "
             f"Proveedor o emisor: "
             f"{_texto_seguro(proveedor, 'No informado')}. "
-            f"Fecha de emisión: {_fecha(fecha_emision) or 'No registrada'}. "
-            f"Fecha de vencimiento: "
-            f"{_fecha(fecha_vencimiento) or 'No aplica'}. "
+            f"Fecha de emisión: {emision or 'No registrada'}. "
+            f"Fecha de vencimiento: {vencimiento or 'No aplica'}. "
             f"Estado documental: {estado}."
+        ),
+        usuario=_texto_seguro(responsable),
+        estado=estado_bitacora,
+        origen="Automático",
+        id_referencia=f"DOC-{documento_id}",
+    )
+
+    if not ok_bitacora:
+        raise RuntimeError(
+            "El documento quedó almacenado en Supabase, pero no fue "
+            "posible registrar su evento en la bitácora. "
+            f"Detalle: {mensaje_bitacora}"
         )
 
-        if estado == "Vencido":
-            estado_bitacora = "Error"
-        elif estado == "Próximo a vencer":
-            estado_bitacora = "Advertencia"
-        else:
-            estado_bitacora = "Información"
-
-        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
-            fecha=ahora.date(),
-            hora=ahora.time().replace(microsecond=0),
-            codigo_equipo=codigo,
-            nombre_equipo=nombre_equipo,
-            laboratorio=laboratorio_equipo,
-            categoria="Documento",
-            evento="Documento registrado",
-            descripcion=descripcion_bitacora,
-            usuario=str(responsable or "").strip(),
-            estado=estado_bitacora,
-            origen="Automático",
-            id_referencia=f"DOC-{documento_id}",
-        )
-
-        if not ok_bitacora:
-            raise RuntimeError(
-                "El documento se guardó, pero no fue posible registrar "
-                "el evento en la bitácora de Supabase. "
-                f"Detalle: {mensaje_bitacora}"
-            )
-
-        return documento_id
-
-    except Exception:
-        conn.rollback()
-        destino.unlink(missing_ok=True)
-        raise
-
-    finally:
-        conn.close()
+    return documento_id
 
 
-def listar_documentos(codigo_equipo=None, incluir_inactivos=False):
-    """Consulta los documentos registrados y devuelve un DataFrame."""
-    conn = get_connection()
-    condiciones = []
-    parametros = []
-
-    if codigo_equipo not in (None, ""):
-        condiciones.append("codigo_equipo = ?")
-        parametros.append(str(codigo_equipo).strip())
-
-    if not incluir_inactivos:
-        condiciones.append("activo = 1")
-
-    where_sql = ""
-    if condiciones:
-        where_sql = "WHERE " + " AND ".join(condiciones)
-
-    consulta = f"""
-        SELECT
-            id,
-            codigo_equipo,
-            tipo_documento,
-            titulo,
-            nombre_archivo,
-            ruta_archivo,
-            mime_type,
-            tamano_bytes,
-            fecha_carga,
-            hora_carga,
-            fecha_emision,
-            fecha_vencimiento,
-            responsable,
-            proveedor,
-            version,
-            observaciones,
-            estado,
-            activo
-        FROM documentos_equipo
-        {where_sql}
-        ORDER BY fecha_carga DESC, hora_carga DESC, id DESC
-    """
+def listar_documentos(
+    codigo_equipo=None,
+    incluir_inactivos=False,
+) -> pd.DataFrame:
+    """Consulta los documentos registrados en Supabase."""
+    actualizar_estados_documentos(codigo_equipo)
 
     try:
-        cursor = conn.execute(consulta, parametros)
-        filas = cursor.fetchall()
-        columnas = [descripcion[0] for descripcion in cursor.description]
-        datos = [dict(fila) for fila in filas]
-        return pd.DataFrame(datos, columns=columnas)
-    finally:
-        conn.close()
+        cliente = obtener_cliente_supabase()
+        consulta = cliente.table("documentos_equipo").select("*")
+
+        if codigo_equipo not in (None, ""):
+            consulta = consulta.eq(
+                "codigo_equipo",
+                _normalizar_codigo(codigo_equipo),
+            )
+
+        if not incluir_inactivos:
+            consulta = consulta.eq("activo", True)
+
+        respuesta = (
+            consulta.order("fecha_carga", desc=True)
+            .order("hora_carga", desc=True)
+            .order("id", desc=True)
+            .execute()
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "No fue posible consultar los documentos en Supabase. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    datos = respuesta.data or []
+
+    if not datos:
+        return pd.DataFrame()
+
+    return pd.DataFrame(datos)
 
 
 def obtener_documento(documento_id):
-    """Obtiene un documento registrado por su identificador."""
-    conn = get_connection()
+    """Obtiene un documento por su identificador."""
     try:
-        fila = conn.execute(
-            "SELECT * FROM documentos_equipo WHERE id = ?",
-            (int(documento_id),),
-        ).fetchone()
-        return dict(fila) if fila is not None else None
-    finally:
-        conn.close()
-
-
-def leer_documento(ruta_archivo):
-    """Lee el archivo físico y devuelve sus bytes."""
-    ruta = Path(str(ruta_archivo))
-    if not ruta.exists():
-        raise FileNotFoundError(
-            "El archivo físico no se encuentra disponible. "
-            "Puede haberse perdido tras un reinicio del servidor."
+        respuesta = (
+            obtener_cliente_supabase()
+            .table("documentos_equipo")
+            .select("*")
+            .eq("id", int(documento_id))
+            .limit(1)
+            .execute()
         )
-    return ruta.read_bytes()
+    except Exception as exc:
+        raise RuntimeError(
+            "No fue posible consultar el documento. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    datos = respuesta.data or []
+    return datos[0] if datos else None
+
+
+def leer_documento(ruta_archivo, bucket=BUCKET_DOCUMENTOS):
+    """
+    Descarga y devuelve los bytes de un archivo almacenado
+    en un bucket privado de Supabase Storage.
+    """
+    ruta = _texto_seguro(ruta_archivo)
+
+    if not ruta:
+        raise FileNotFoundError(
+            "El documento no tiene una ruta de almacenamiento válida."
+        )
+
+    try:
+        contenido = (
+            obtener_cliente_supabase()
+            .storage.from_(bucket)
+            .download(ruta)
+        )
+    except Exception as exc:
+        raise FileNotFoundError(
+            "El archivo no se encuentra disponible en Supabase Storage. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    if not contenido:
+        raise FileNotFoundError(
+            "Supabase Storage devolvió un archivo vacío."
+        )
+
+    return bytes(contenido)
 
 
 def eliminar_documento(documento_id, usuario=""):
-    """Realiza borrado lógico en SQLite y elimina el archivo físico disponible."""
-    conn = get_connection()
-    cur = conn.cursor()
+    """
+    Realiza borrado lógico de los metadatos y elimina el archivo
+    del bucket privado cuando está disponible.
+    """
+    documento = obtener_documento(documento_id)
 
-    try:
-        fila = cur.execute(
-            """
-            SELECT codigo_equipo, tipo_documento, nombre_archivo, ruta_archivo
-            FROM documentos_equipo
-            WHERE id = ?
-            """,
-            (int(documento_id),),
-        ).fetchone()
+    if documento is None:
+        raise ValueError("El documento no existe.")
 
-        if fila is None:
-            raise ValueError("El documento no existe.")
-
-        ahora = datetime.now()
-
-        cur.execute(
-            "UPDATE documentos_equipo SET activo = 0 WHERE id = ?",
-            (int(documento_id),),
-        )
-
-        conn.commit()
-
-        codigo_equipo = str(fila["codigo_equipo"])
-        nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
-            codigo_equipo
-        )
-
-        ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
-            fecha=ahora.date(),
-            hora=ahora.time().replace(microsecond=0),
-            codigo_equipo=codigo_equipo,
-            nombre_equipo=nombre_equipo,
-            laboratorio=laboratorio_equipo,
-            categoria="Documento",
-            evento="Documento eliminado",
-            descripcion=(
-                f"Tipo: {fila['tipo_documento']}. "
-                f"Archivo: {fila['nombre_archivo']}. "
-                "Registro desactivado lógicamente y archivo físico "
-                "eliminado cuando estuvo disponible."
-            ),
-            usuario=str(usuario or "").strip(),
-            estado="Acción administrativa",
-            origen="Manual",
-            id_referencia=f"DOC-{int(documento_id)}",
-        )
-
-        if not ok_bitacora:
-            raise RuntimeError(
-                "El documento fue desactivado, pero no fue posible "
-                "registrar el evento en la bitácora de Supabase. "
-                f"Detalle: {mensaje_bitacora}"
-            )
-
-        Path(fila["ruta_archivo"]).unlink(missing_ok=True)
+    if not bool(documento.get("activo", True)):
         return True
 
-    except Exception:
-        conn.rollback()
-        raise
+    cliente = obtener_cliente_supabase()
+    ruta = _texto_seguro(documento.get("ruta_archivo"))
+    bucket_nombre = _texto_seguro(
+        documento.get("bucket"),
+        BUCKET_DOCUMENTOS,
+    )
 
-    finally:
-        conn.close()
+    try:
+        (
+            cliente.table("documentos_equipo")
+            .update({"activo": False})
+            .eq("id", int(documento_id))
+            .execute()
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            "No fue posible desactivar el documento en Supabase. "
+            f"Detalle: {exc}"
+        ) from exc
+
+    if ruta:
+        try:
+            cliente.storage.from_(bucket_nombre).remove([ruta])
+        except Exception as exc:
+            try:
+                (
+                    cliente.table("documentos_equipo")
+                    .update({"activo": True})
+                    .eq("id", int(documento_id))
+                    .execute()
+                )
+            except Exception:
+                pass
+
+            raise RuntimeError(
+                "No fue posible eliminar el archivo de Supabase Storage. "
+                f"Detalle: {exc}"
+            ) from exc
+
+    ahora = _ahora_colombia()
+    codigo = _normalizar_codigo(documento.get("codigo_equipo"))
+    nombre_equipo, laboratorio_equipo = _obtener_identidad_equipo(
+        codigo
+    )
+
+    ok_bitacora, mensaje_bitacora = registrar_evento_bitacora(
+        fecha=ahora.date(),
+        hora=ahora.time().replace(microsecond=0),
+        codigo_equipo=codigo,
+        nombre_equipo=nombre_equipo,
+        laboratorio=laboratorio_equipo,
+        categoria="Documento",
+        evento="Documento eliminado",
+        descripcion=(
+            f"Tipo: {documento.get('tipo_documento')}. "
+            f"Archivo: {documento.get('nombre_archivo')}. "
+            "Registro desactivado lógicamente y archivo eliminado "
+            "de Supabase Storage."
+        ),
+        usuario=_texto_seguro(usuario),
+        estado="Acción administrativa",
+        origen="Manual",
+        id_referencia=f"DOC-{int(documento_id)}",
+    )
+
+    if not ok_bitacora:
+        raise RuntimeError(
+            "El documento fue eliminado, pero no fue posible registrar "
+            "el evento en la bitácora. "
+            f"Detalle: {mensaje_bitacora}"
+        )
+
+    return True
 
 
 def actualizar_estados_documentos(codigo_equipo=None):
     """Actualiza el estado de todos los documentos activos."""
-    conn = get_connection()
-    cur = conn.cursor()
-
     try:
-        if codigo_equipo in (None, ""):
-            filas = cur.execute(
-                """
-                SELECT id, fecha_vencimiento
-                FROM documentos_equipo
-                WHERE activo = 1
-                """
-            ).fetchall()
-        else:
-            filas = cur.execute(
-                """
-                SELECT id, fecha_vencimiento
-                FROM documentos_equipo
-                WHERE activo = 1 AND codigo_equipo = ?
-                """,
-                (str(codigo_equipo).strip(),),
-            ).fetchall()
+        cliente = obtener_cliente_supabase()
+        consulta = (
+            cliente.table("documentos_equipo")
+            .select("id,fecha_vencimiento,estado")
+            .eq("activo", True)
+        )
 
-        for fila in filas:
-            cur.execute(
-                "UPDATE documentos_equipo SET estado = ? WHERE id = ?",
-                (calcular_estado(fila["fecha_vencimiento"]), fila["id"]),
+        if codigo_equipo not in (None, ""):
+            consulta = consulta.eq(
+                "codigo_equipo",
+                _normalizar_codigo(codigo_equipo),
             )
 
-        conn.commit()
-        return len(filas)
+        respuesta = consulta.execute()
+    except Exception as exc:
+        raise RuntimeError(
+            "No fue posible consultar los estados documentales. "
+            f"Detalle: {exc}"
+        ) from exc
 
-    except Exception:
-        conn.rollback()
-        raise
+    filas = respuesta.data or []
+    actualizados = 0
 
-    finally:
-        conn.close()
+    for fila in filas:
+        nuevo_estado = calcular_estado(
+            fila.get("fecha_vencimiento")
+        )
+
+        if fila.get("estado") == nuevo_estado:
+            continue
+
+        try:
+            (
+                cliente.table("documentos_equipo")
+                .update({"estado": nuevo_estado})
+                .eq("id", int(fila["id"]))
+                .execute()
+            )
+            actualizados += 1
+        except Exception as exc:
+            raise RuntimeError(
+                "No fue posible actualizar el estado de un documento. "
+                f"Detalle: {exc}"
+            ) from exc
+
+    return actualizados
 
 
 def resumen_documentos(codigo_equipo=None):
     """Devuelve indicadores básicos de gestión documental."""
-    actualizar_estados_documentos(codigo_equipo)
     documentos = listar_documentos(codigo_equipo)
 
     if documentos.empty:
@@ -463,17 +562,25 @@ def resumen_documentos(codigo_equipo=None):
             "archivos_disponibles": 0,
         }
 
-    disponibilidad = documentos["ruta_archivo"].apply(
-        lambda ruta: Path(str(ruta)).exists()
-    )
-
     return {
         "total": int(len(documentos)),
-        "vigentes": int((documentos["estado"] == "Vigente").sum()),
-        "proximos": int((documentos["estado"] == "Próximo a vencer").sum()),
-        "vencidos": int((documentos["estado"] == "Vencido").sum()),
-        "sin_vencimiento": int(
-            (documentos["estado"] == "Sin vencimiento").sum()
+        "vigentes": int(
+            (documentos["estado"] == "Vigente").sum()
         ),
-        "archivos_disponibles": int(disponibilidad.sum()),
+        "proximos": int(
+            (
+                documentos["estado"]
+                == "Próximo a vencer"
+            ).sum()
+        ),
+        "vencidos": int(
+            (documentos["estado"] == "Vencido").sum()
+        ),
+        "sin_vencimiento": int(
+            (
+                documentos["estado"]
+                == "Sin vencimiento"
+            ).sum()
+        ),
+        "archivos_disponibles": int(len(documentos)),
     }
