@@ -27,7 +27,8 @@ st.markdown("""
 .pc-alert-detail{font-size:12px;line-height:1.4;color:#445b78;overflow-wrap:anywhere}
 div[data-testid="stMetricValue"]{font-size:25px;line-height:1.1}
 div[data-testid="stMetricLabel"]{font-size:12px}div[data-testid="stMetricDelta"]{font-size:11px}
-div[data-testid="stDataFrame"]{font-size:12px}
+div[data-testid="stDataFrame"]{font-size:11px}
+h3{font-size:18px!important;line-height:1.25!important}
 </style>
 """, unsafe_allow_html=True)
 
@@ -93,10 +94,61 @@ else: st.dataframe(agenda,width="stretch",hide_index=True,height=min(430,38+len(
 st.divider(); p1,p2=st.columns([1,1.25])
 with p1:
     st.markdown("### ⚖️ Patrones vencidos o próximos")
-    st.success("No hay patrones vencidos ni próximos a vencer.") if patrones.empty else st.dataframe(patrones,width="stretch",hide_index=True,height=min(430,38+len(patrones)*35))
+    if patrones.empty:
+        st.success("No hay patrones vencidos ni próximos a vencer.")
+    else:
+        columnas_patrones = [
+            columna
+            for columna in [
+                "codigo_patron",
+                "descripcion_patron",
+                "codigo_equipo",
+                "nombre_equipo",
+                "laboratorio",
+                "fecha_vencimiento",
+                "dias_restantes",
+                "estado_patron",
+            ]
+            if columna in patrones.columns
+        ]
+        st.dataframe(
+            patrones[columnas_patrones],
+            width="stretch",
+            hide_index=True,
+            height=min(430, 38 + len(patrones) * 35),
+        )
 with p2:
     st.markdown("### ⚠️ Verificaciones no conformes")
-    st.success("No hay verificaciones no conformes o incompletas.") if no_conformes.empty else st.dataframe(no_conformes,width="stretch",hide_index=True,height=min(430,38+len(no_conformes)*35))
+    if no_conformes.empty:
+        st.success(
+            "No hay verificaciones no conformes o incompletas."
+        )
+    else:
+        columnas_no_conformes = [
+            columna
+            for columna in [
+                "fecha",
+                "hora",
+                "codigo_equipo",
+                "nombre_equipo",
+                "laboratorio",
+                "estado_sesion",
+                "punto",
+                "resultado",
+                "limite_inferior",
+                "limite_superior",
+                "estado_punto",
+                "responsable",
+                "observacion",
+            ]
+            if columna in no_conformes.columns
+        ]
+        st.dataframe(
+            no_conformes[columnas_no_conformes],
+            width="stretch",
+            hide_index=True,
+            height=min(430, 38 + len(no_conformes) * 35),
+        )
 
 st.divider(); g1,g2=st.columns([1,1.25])
 with g1:
@@ -130,10 +182,51 @@ with t2:
 st.divider(); u1,u2=st.columns([1.3,1])
 with u1:
     st.markdown("### Últimas verificaciones")
-    st.info("Aún no existen sesiones registradas.") if ultimas.empty else st.dataframe(ultimas[[c for c in ["fecha","hora","codigo_equipo","nombre_equipo","laboratorio","responsable","estado","total_puntos"] if c in ultimas.columns]],width="stretch",hide_index=True)
+    if ultimas.empty:
+        st.info("Aún no existen sesiones registradas.")
+    else:
+        columnas_ultimas = [
+            columna
+            for columna in [
+                "fecha",
+                "hora",
+                "codigo_equipo",
+                "nombre_equipo",
+                "laboratorio",
+                "responsable",
+                "estado",
+                "total_puntos",
+            ]
+            if columna in ultimas.columns
+        ]
+        st.dataframe(
+            ultimas[columnas_ultimas],
+            width="stretch",
+            hide_index=True,
+        )
 with u2:
     st.markdown("### Actividad reciente")
-    st.info("La bitácora todavía no tiene eventos.") if actividad.empty else st.dataframe(actividad[[c for c in ["fecha","hora","codigo_equipo","categoria","evento","usuario","estado"] if c in actividad.columns]],width="stretch",hide_index=True)
+    if actividad.empty:
+        st.info("La bitácora todavía no tiene eventos.")
+    else:
+        columnas_actividad = [
+            columna
+            for columna in [
+                "fecha",
+                "hora",
+                "codigo_equipo",
+                "categoria",
+                "evento",
+                "usuario",
+                "estado",
+            ]
+            if columna in actividad.columns
+        ]
+        st.dataframe(
+            actividad[columnas_actividad],
+            width="stretch",
+            hide_index=True,
+        )
 
 st.divider(); st.markdown("### Equipos con mayor actividad")
 if ranking.empty: st.info("Aún no hay información para construir el ranking.")
