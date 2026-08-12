@@ -1,248 +1,99 @@
 import math
 
-import pandas as pd
-
-
 def limpiar_numero(valor):
-    """Convierte un valor numérico de Excel/SQLite a float."""
     try:
-        if valor is None:
+        if valor is None or str(valor).strip() == "":
             return None
-
-        texto = str(valor).strip()
-
-        if texto == "" or texto.lower() in {"nan", "none", "null"}:
-            return None
-
         numero = float(valor)
-
-        if math.isnan(numero) or math.isinf(numero):
+        if math.isnan(numero):
             return None
-
         return numero
-
-    except (TypeError, ValueError):
+    except Exception:
         return None
 
-
-def _primer_valor(punto, *nombres):
-    """Devuelve el primer valor disponible entre varios nombres de columna."""
-    for nombre in nombres:
-        if nombre in punto:
-            valor = punto.get(nombre)
-
-            if valor is not None and str(valor).strip() != "":
-                return valor
-
-    return None
-
-
-def _normalizar_codigo(valor):
-    """
-    Normaliza códigos provenientes de Excel.
-
-    Ejemplos:
-    63065, 63065.0 y "63065" se comparan como "63065".
-    """
+def normalizar_codigo_equipo(valor):
     if valor is None:
         return ""
-
     texto = str(valor).strip()
-
-    try:
-        numero = float(texto)
-
-        if numero.is_integer():
-            return str(int(numero))
-
-    except (TypeError, ValueError):
-        pass
-
+    if not texto or texto.lower() in {"nan", "nat", "none"}:
+        return ""
+    if texto.endswith(".0"):
+        base = texto[:-2]
+        if base.replace("-", "").isdigit():
+            return base
     return texto
 
-
 def obtener_puntos_equipo(puntos_df, codigo_equipo):
-    """Filtra los puntos configurados para el equipo seleccionado."""
-    if puntos_df is None or puntos_df.empty:
-        return pd.DataFrame()
-
+    if puntos_df.empty:
+        return puntos_df.copy()
     if "codigo_equipo" not in puntos_df.columns:
-        return pd.DataFrame()
-
+        return puntos_df.iloc[0:0].copy()
+    codigo_objetivo = normalizar_codigo_equipo(codigo_equipo)
+    if not codigo_objetivo:
+        return puntos_df.iloc[0:0].copy()
     df = puntos_df.copy()
-    codigo_buscado = _normalizar_codigo(codigo_equipo)
-
-    codigos_normalizados = df["codigo_equipo"].apply(_normalizar_codigo)
-
-    resultado = df[codigos_normalizados == codigo_buscado].copy()
-
-    if "id_punto" in resultado.columns:
-        resultado = resultado.sort_values(
-            by="id_punto",
-            kind="stable",
-        )
-
-    return resultado.reset_index(drop=True)
-
+    df["_codigo_equipo_normalizado"] = df["codigo_equipo"].apply(normalizar_codigo_equipo)
+    resultado = df[df["_codigo_equipo_normalizado"].eq(codigo_objetivo)].copy()
+    return resultado.drop(columns=["_codigo_equipo_normalizado"], errors="ignore")
 
 def preparar_punto_para_verificacion(punto):
-    """
-    Prepara un punto usando límites absolutos.
-
-    PROVICHECK almacena:
-    - limite_inferior_g
-    - valor_nominal_g
-    - limite_superior_g
-
-    Los límites inferior y superior ya representan el intervalo real,
-    por lo que no se deben volver a sumar al valor nominal.
-    """
-    nominal = limpiar_numero(
-        _primer_valor(
-            punto,
-            "valor_nominal_g",
-            "valor_nominal",
-            "nominal",
-        )
-    )
-
-    limite_inferior = limpiar_numero(
-        _primer_valor(
-            punto,
-            "limite_inferior_g",
-            "limite_inferior",
-            "li",
-        )
-    )
-
-    limite_superior = limpiar_numero(
-        _primer_valor(
-            punto,
-            "limite_superior_g",
-            "limite_superior",
-            "ls",
-        )
-    )
-
-    desviacion = limpiar_numero(
-        _primer_valor(
-            punto,
-            "desviacion_aceptada_g",
-            "desviacion_aceptada",
-            "tolerancia",
-        )
-    )
-
-    # Respaldo: si faltan límites absolutos, se calculan con nominal ± desviación.
-    if nominal is not None and desviacion is not None:
-        if limite_inferior is None:
-            limite_inferior = nominal - desviacion
-
-        if limite_superior is None:
-            limite_superior = nominal + desviacion
-
-    decimales = _primer_valor(
-        punto,
-        "decimales",
-        "numero_decimales",
-    )
-
-    try:
-        decimales = int(decimales)
-    except (TypeError, ValueError):
-        decimales = 4
-
-    decimales = max(0, min(decimales, 8))
-
+    valor_nominal = limpiar_numero(punto.get("valor_nominal_g", punto.get("valor_nominal")))
+    limite_inferior = limpiar_numero(punto.get("limite_inferior_g", punto.get("limite_inferior")))
+    limite_superior = limpiar_numero(punto.get("limite_superior_g", punto.get("limite_superior")))
+    decimales = punto.get("decimales", punto.get("numero_decimales"))
     return {
         "id_punto": punto.get("id_punto"),
-        "codigo_equipo": _normalizar_codigo(
-            punto.get("codigo_equipo")
-        ),
-        "tipo_equipo": punto.get("tipo_equipo"),
+        "codigo_equipo": normalizar_codigo_equipo(punto.get("codigo_equipo")),
         "nombre_chequeo": punto.get("nombre_chequeo"),
         "punto_verificacion": punto.get("punto_verificacion"),
         "unidad": punto.get("unidad"),
-        "valor_nominal": nominal,
+        "valor_nominal": valor_nominal,
         "limite_inferior": limite_inferior,
         "limite_superior": limite_superior,
-        "desviacion_aceptada": desviacion,
         "decimales": decimales,
-        "frecuencia": punto.get("frecuencia"),
-        "criterio": punto.get("criterio"),
-        "estado": punto.get("estado"),
         "codigo_patron": punto.get("codigo_patron"),
     }
 
-
-def evaluar_resultado(
-    resultado_observado,
-    valor_nominal,
-    limite_inferior,
-    limite_superior,
-):
-    """
-    Evalúa un resultado contra límites absolutos.
-
-    Ejemplo:
-    nominal = 0.0200
-    límite inferior = 0.0198
-    límite superior = 0.0202
-    """
+def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limite_superior):
     resultado = limpiar_numero(resultado_observado)
     nominal = limpiar_numero(valor_nominal)
-    limite_inferior_real = limpiar_numero(limite_inferior)
-    limite_superior_real = limpiar_numero(limite_superior)
-
-    error = (
-        resultado - nominal
-        if resultado is not None and nominal is not None
-        else None
-    )
-
+    tolerancia_inferior = limpiar_numero(limite_inferior)
+    tolerancia_superior = limpiar_numero(limite_superior)
     if resultado is None:
         return {
             "resultado": resultado_observado,
             "valor_nominal": nominal,
-            "error": error,
-            "limite_inferior_real": limite_inferior_real,
-            "limite_superior_real": limite_superior_real,
+            "error": None,
+            "limite_inferior_real": None,
+            "limite_superior_real": None,
             "cumple": None,
             "estado": "Sin resultado",
             "mensaje": "No se ingresó un resultado válido.",
         }
-
-    if limite_inferior_real is None or limite_superior_real is None:
+    error = resultado - nominal if nominal is not None else None
+    if nominal is None or tolerancia_inferior is None or tolerancia_superior is None:
         return {
             "resultado": resultado,
             "valor_nominal": nominal,
             "error": error,
-            "limite_inferior_real": limite_inferior_real,
-            "limite_superior_real": limite_superior_real,
+            "limite_inferior_real": None,
+            "limite_superior_real": None,
             "cumple": None,
             "estado": "Sin límites",
-            "mensaje": "El punto no tiene límites configurados.",
+            "mensaje": "Punto sin límites configurados.",
         }
-
-    if limite_inferior_real > limite_superior_real:
-        limite_inferior_real, limite_superior_real = (
-            limite_superior_real,
-            limite_inferior_real,
-        )
-
+    limite_inferior_real = nominal + tolerancia_inferior
+    limite_superior_real = nominal + tolerancia_superior
     cumple = limite_inferior_real <= resultado <= limite_superior_real
-
     return {
         "resultado": resultado,
         "valor_nominal": nominal,
         "error": error,
         "limite_inferior_real": limite_inferior_real,
         "limite_superior_real": limite_superior_real,
+        "tolerancia_inferior": tolerancia_inferior,
+        "tolerancia_superior": tolerancia_superior,
         "cumple": cumple,
         "estado": "Cumple" if cumple else "No cumple",
-        "mensaje": (
-            "Resultado dentro de los límites configurados."
-            if cumple
-            else "Resultado fuera de los límites configurados."
-        ),
+        "mensaje": "Resultado dentro de límites reales." if cumple else "Resultado fuera de límites reales.",
     }

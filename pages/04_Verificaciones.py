@@ -645,6 +645,12 @@ if equipos.empty:
 puntos = puntos.copy()
 puntos.columns = [str(columna).strip() for columna in puntos.columns]
 
+if "codigo_equipo" in puntos.columns:
+    puntos["codigo_equipo"] = puntos["codigo_equipo"].apply(normalizar_codigo)
+
+if "codigo_equipo" in equipos.columns:
+    equipos["codigo_equipo"] = equipos["codigo_equipo"].apply(normalizar_codigo)
+
 patrones = patrones.copy()
 patrones.columns = [str(columna).strip() for columna in patrones.columns]
 
@@ -681,7 +687,7 @@ if faltantes:
     st.stop()
 
 equipos["descripcion"] = (
-    equipos["codigo_equipo"].astype(str).str.strip()
+    equipos["codigo_equipo"].apply(normalizar_codigo)
     + " · "
     + equipos["nombre_equipo"].astype(str).str.strip()
 )
@@ -777,23 +783,38 @@ fecha_hora_registro = combinar_fecha_hora(fecha_registro, hora_registro)
 
 st.markdown("### 2. Selección del equipo")
 
-col_equipo, col_vista = st.columns([3, 1])
-
-def limpiar_estado_verificacion_equipo():
-    """Limpia los widgets técnicos pertenecientes al equipo anterior."""
+def limpiar_widgets_equipo_anterior():
     prefijos = ("resultado_", "obs_tipo_", "obs_txt_")
     for clave in list(st.session_state.keys()):
         if clave.startswith(prefijos):
-            del st.session_state[clave]
+            st.session_state.pop(clave, None)
 
+def al_cambiar_equipo():
+    limpiar_widgets_equipo_anterior()
+    seleccion = st.session_state.get("selector_equipo_verificacion")
+    if seleccion:
+        st.session_state["_codigo_equipo_verificacion"] = normalizar_codigo(
+            str(seleccion).split(" · ", 1)[0]
+        )
+    else:
+        st.session_state["_codigo_equipo_verificacion"] = None
+
+if "_selector_verificacion_v3_inicializado" not in st.session_state:
+    st.session_state["selector_equipo_verificacion"] = None
+    st.session_state["_codigo_equipo_verificacion"] = None
+    st.session_state["_selector_verificacion_v3_inicializado"] = True
+    limpiar_widgets_equipo_anterior()
+
+col_equipo, col_vista = st.columns([3, 1])
 
 with col_equipo:
-    opciones_equipos = ["— Seleccione un equipo —"] + equipos["descripcion"].tolist()
     equipo_sel = st.selectbox(
         "Seleccione el equipo que desea verificar",
-        opciones_equipos,
-        index=0,
+        equipos["descripcion"].tolist(),
+        index=None,
+        placeholder="Seleccione un equipo...",
         key="selector_equipo_verificacion",
+        on_change=al_cambiar_equipo,
     )
 
 with col_vista:
@@ -804,24 +825,24 @@ with col_vista:
         key="tarjetas_por_fila_verificacion",
     )
 
-if equipo_sel == "— Seleccione un equipo —":
-    if st.session_state.get("_codigo_equipo_verificacion"):
-        limpiar_estado_verificacion_equipo()
-        st.session_state["_codigo_equipo_verificacion"] = None
-
-    st.info("Seleccione un equipo para cargar su identificación y sus puntos de verificación.")
+if not equipo_sel:
+    st.info(
+        "Seleccione un equipo para cargar su identificación "
+        "y sus puntos de verificación."
+    )
     pie_pagina()
     st.stop()
 
-codigo_equipo = normalizar_codigo(equipo_sel.split(" · ", 1)[0])
-codigo_anterior = st.session_state.get("_codigo_equipo_verificacion")
+codigo_equipo = normalizar_codigo(
+    str(equipo_sel).split(" · ", 1)[0]
+)
 
-if codigo_anterior != codigo_equipo:
-    limpiar_estado_verificacion_equipo()
+if st.session_state.get("_codigo_equipo_verificacion") != codigo_equipo:
+    limpiar_widgets_equipo_anterior()
     st.session_state["_codigo_equipo_verificacion"] = codigo_equipo
 
 coincidencias = equipos[
-    equipos["codigo_equipo"].apply(normalizar_codigo) == codigo_equipo
+    equipos["codigo_equipo"].apply(normalizar_codigo).eq(codigo_equipo)
 ]
 
 if coincidencias.empty:
@@ -880,7 +901,7 @@ with st.container(border=True):
 
 st.divider()
 
-puntos_equipo = obtener_puntos_equipo(puntos, codigo_equipo)
+puntos_equipo = obtener_puntos_equipo(puntos, normalizar_codigo(codigo_equipo))
 
 if puntos_equipo.empty:
     st.warning("Este equipo no tiene puntos de verificación configurados.")
@@ -957,7 +978,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
             resultado_capturado = st.number_input(
                 "Resultado observado",
-                key=f"resultado_{codigo_equipo}_{id_punto}",
+                key=f"resultado_{codigo_equipo}_{id_punto}_{i}",
                 format=f"%.{decimales_punto}f",
                 disabled=info_patron["bloqueado"],
                 help=(
@@ -978,7 +999,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 st.selectbox(
                     "Observación",
                     [observacion_tipo],
-                    key=f"obs_tipo_{codigo_equipo}_{id_punto}",
+                    key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
                     disabled=True,
                 )
             else:
@@ -986,14 +1007,14 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 observacion_tipo = st.selectbox(
                     "Observación",
                     OPCIONES_OBSERVACION,
-                    key=f"obs_tipo_{codigo_equipo}_{id_punto}",
+                    key=f"obs_tipo_{codigo_equipo}_{id_punto}_{i}",
                 )
 
             observacion_texto = ""
             if observacion_tipo == "Otro":
                 observacion_texto = st.text_area(
                     "Detalle de la observación",
-                    key=f"obs_txt_{codigo_equipo}_{id_punto}",
+                    key=f"obs_txt_{codigo_equipo}_{id_punto}_{i}",
                     placeholder="Describa la novedad encontrada.",
                 )
 
