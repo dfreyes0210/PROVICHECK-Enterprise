@@ -61,6 +61,78 @@ aplicar_estilo()
 sidebar_pro()
 encabezado()
 
+st.markdown(
+    """
+    <style>
+    div[data-testid="stMetric"] {
+        min-height: 70px !important;
+        padding: 0.50rem 0.60rem !important;
+        border-radius: 11px !important;
+    }
+
+    div[data-testid="stMetricLabel"],
+    div[data-testid="stMetricLabel"] *,
+    div[data-testid="stMetricLabel"] p {
+        font-size: 10px !important;
+        line-height: 1.15 !important;
+        font-weight: 700 !important;
+        margin-bottom: 0.15rem !important;
+    }
+
+    div[data-testid="stMetricValue"],
+    div[data-testid="stMetricValue"] *,
+    div[data-testid="stMetricValue"] p {
+        font-size: 16px !important;
+        line-height: 1.12 !important;
+        font-weight: 800 !important;
+        letter-spacing: -0.01em !important;
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        overflow-wrap: anywhere !important;
+        word-break: normal !important;
+        max-width: 100% !important;
+    }
+
+    div[data-testid="stMetricDelta"],
+    div[data-testid="stMetricDelta"] * {
+        font-size: 9px !important;
+    }
+
+    .block-container h1 {
+        font-size: 25px !important;
+        line-height: 1.20 !important;
+    }
+
+    .block-container h2 {
+        font-size: 20px !important;
+        line-height: 1.20 !important;
+    }
+
+    .block-container h3 {
+        font-size: 16px !important;
+        line-height: 1.22 !important;
+    }
+
+    .block-container h4 {
+        font-size: 14px !important;
+        line-height: 1.22 !important;
+    }
+
+    button[data-baseweb="tab"] {
+        padding: 0.30rem 0.42rem !important;
+        min-height: 32px !important;
+    }
+
+    button[data-baseweb="tab"] *,
+    button[data-baseweb="tab"] p {
+        font-size: 10px !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 
 def estado_visual(estado):
