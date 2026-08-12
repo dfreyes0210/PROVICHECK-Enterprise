@@ -151,7 +151,7 @@ st.markdown(
 
     .pc-id-value {
         color: #0f2747;
-        font-size: 17px;
+        font-size: 15px;
         font-weight: 800;
         line-height: 1.22;
         overflow-wrap: anywhere;
@@ -878,9 +878,15 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     nombre_punto = punto.get("punto_verificacion", f"Punto {i + 1}")
     nombre_chequeo = punto.get("nombre_chequeo", "Chequeo sin nombre")
 
-    decimales_punto = punto.get("decimales", DECIMALES)
+    decimales_punto = punto.get(
+        "decimales",
+        fila_original.get(
+            "decimales",
+            fila_original.get("numero_decimales", DECIMALES),
+        ),
+    )
     try:
-        decimales_punto = int(decimales_punto)
+        decimales_punto = int(float(decimales_punto))
     except (TypeError, ValueError):
         decimales_punto = DECIMALES
 

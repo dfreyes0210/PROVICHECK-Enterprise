@@ -154,21 +154,46 @@ def aplicar_estilo():
         background:linear-gradient(145deg,#FFF 0%,#FBFDFF 100%);
         border:1px solid var(--pc-border);
         border-top:3px solid var(--pc-green);
-        border-radius:14px;
-        padding:.9rem 1rem;
-        box-shadow:0 5px 16px rgba(15,39,71,.05);
+        border-radius:12px;
+        padding:.62rem .72rem;
+        min-height:78px;
+        box-shadow:0 4px 12px rgba(15,39,71,.045);
+        overflow:visible!important;
     }
 
+    [data-testid="stMetricLabel"],
     [data-testid="stMetricLabel"] p {
         color:var(--pc-muted)!important;
+        font-size:.68rem!important;
+        line-height:1.2!important;
         font-weight:700!important;
+        margin-bottom:.20rem!important;
     }
 
     [data-testid="stMetricValue"],
     [data-testid="stMetricValue"] * {
         color:var(--pc-text)!important;
-        font-weight:850!important;
+        font-size:1.25rem!important;
+        line-height:1.12!important;
+        font-weight:800!important;
+        letter-spacing:-.015em!important;
+        white-space:normal!important;
+        overflow:visible!important;
+        text-overflow:clip!important;
+        overflow-wrap:anywhere!important;
+        word-break:normal!important;
     }
+
+    [data-testid="stMetricDelta"],
+    [data-testid="stMetricDelta"] * {
+        font-size:.66rem!important;
+        line-height:1.15!important;
+    }
+
+    .block-container h1 {font-size:1.72rem!important; line-height:1.20!important;}
+    .block-container h2 {font-size:1.38rem!important; line-height:1.22!important;}
+    .block-container h3 {font-size:1.12rem!important; line-height:1.24!important;}
+    .block-container h4 {font-size:1rem!important; line-height:1.24!important;}
 
     div[data-testid="stVerticalBlockBorderWrapper"] {
         border:1px solid var(--pc-border)!important;
@@ -374,7 +399,8 @@ def aplicar_estilo():
         border:1px solid var(--pc-border)!important;
         border-bottom:0!important;
         border-radius:9px 9px 0 0!important;
-        padding:.5rem .75rem!important;
+        padding:.40rem .58rem!important;
+        font-size:.72rem!important;
     }
 
     button[data-baseweb="tab"] * {
@@ -458,13 +484,13 @@ def aplicar_estilo():
 
     .equipment-code {
         color:var(--pc-blue);
-        font-size:1.25rem;
+        font-size:1.12rem;
         font-weight:850;
     }
 
     .equipment-name {
         color:var(--pc-text);
-        font-size:1rem;
+        font-size:.92rem;
         font-weight:750;
         margin-bottom:.75rem;
     }

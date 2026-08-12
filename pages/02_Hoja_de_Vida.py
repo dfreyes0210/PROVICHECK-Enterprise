@@ -105,6 +105,24 @@ def normalizar_codigo(valor):
     return texto
 
 
+def obtener_decimales_configurados(fila, por_defecto=4):
+    for columna in ("decimales", "numero_decimales"):
+        try:
+            valor = fila.get(columna)
+        except AttributeError:
+            valor = None
+        if valor is None:
+            continue
+        texto = str(valor).strip()
+        if not texto or texto.lower() in {"nan", "nat", "none"}:
+            continue
+        try:
+            return max(0, min(int(float(texto)), 8))
+        except (TypeError, ValueError):
+            continue
+    return int(por_defecto)
+
+
 def convertir_fecha(valor):
     fecha = pd.to_datetime(valor, errors="coerce")
     if pd.isna(fecha):
@@ -203,7 +221,7 @@ def preparar_patrones_equipo(codigo_equipo):
     )
 
 
-def crear_figura_tendencia(df_punto, punto_sel, unidad):
+def crear_figura_tendencia(df_punto, punto_sel, unidad, decimales=4):
     figura = go.Figure()
 
     figura.add_trace(
@@ -217,7 +235,7 @@ def crear_figura_tendencia(df_punto, punto_sel, unidad):
             ].fillna("").to_numpy(),
             hovertemplate=(
                 "<b>%{x|%d/%m/%Y %H:%M}</b><br>"
-                "Resultado: %{y}<br>"
+                f"Resultado: %{{y:.{decimales}f}}<br>"
                 "Responsable: %{customdata[0]}<br>"
                 "Estado: %{customdata[1]}<br>"
                 "Observación: %{customdata[2]}"
@@ -279,7 +297,9 @@ def crear_figura_tendencia(df_punto, punto_sel, unidad):
         legend_title="Serie",
         hovermode="x unified",
         margin={"l": 40, "r": 25, "t": 65, "b": 45},
+        font={"size": 11},
     )
+    figura.update_yaxes(tickformat=f".{decimales}f")
 
     return figura
 
@@ -346,17 +366,20 @@ if not equipo:
     st.page_link("pages/01_Equipos.py", label="🧪 Ir a Equipos")
     st.stop()
 
-codigo = str(equipo.get("codigo_equipo", "Sin código"))
-nombre = equipo.get("nombre_equipo", "Equipo sin nombre")
-estado = equipo.get("estado", "Sin estado")
-criticidad = equipo.get("criticidad", "Sin criticidad")
-laboratorio = equipo.get("laboratorio", "Sin laboratorio")
-ubicacion = equipo.get("ubicacion", "Sin ubicación")
-responsable = equipo.get("responsable", "Sin responsable")
-marca = equipo.get("marca", "Sin marca")
-modelo = equipo.get("modelo", "Sin modelo")
-serie = equipo.get("serie", "Sin serie")
-frecuencia = equipo.get("frecuencia_verificacion", "Sin frecuencia")
+codigo = normalizar_codigo(equipo.get("codigo_equipo")) or "Sin código"
+nombre = texto_seguro(equipo.get("nombre_equipo"), "Equipo sin nombre")
+estado = texto_seguro(equipo.get("estado"), "Sin estado")
+criticidad = texto_seguro(equipo.get("criticidad"), "Sin criticidad")
+laboratorio = texto_seguro(equipo.get("laboratorio"), "Sin laboratorio")
+ubicacion = texto_seguro(equipo.get("ubicacion"), "Sin ubicación")
+responsable = texto_seguro(equipo.get("responsable"), "Sin responsable")
+marca = texto_seguro(equipo.get("marca"), "Sin marca")
+modelo = texto_seguro(equipo.get("modelo"), "Sin modelo")
+serie = texto_seguro(equipo.get("serie"), "Sin serie")
+frecuencia = texto_seguro(
+    equipo.get("frecuencia_verificacion"),
+    "Sin frecuencia",
+)
 
 ultima = consultar_ultima_verificacion(codigo)
 historial = consultar_historial_equipo(codigo, limite=5000)
@@ -631,6 +654,10 @@ with tabs[4]:
                         or patron_fila.get("unidad_patron"),
                         "",
                     )
+                    decimales_tendencia = obtener_decimales_configurados(
+                        patron_fila,
+                        por_defecto=4,
+                    )
 
                     df_punto = df_tendencia[
                         df_tendencia["punto"].astype(str)
@@ -664,7 +691,7 @@ with tabs[4]:
                                     patron_fila.get(
                                         'valor_nominal_g_patron'
                                     ),
-                                    4,
+                                    decimales_tendencia,
                                 )} {unidad_sel}"
                             ),
                         )
@@ -700,13 +727,13 @@ with tabs[4]:
                         m1.metric("Registros", resumen["total"])
                         m2.metric(
                             "Promedio",
-                            formatear_numero(resumen["promedio"], 4),
+                            formatear_numero(resumen["promedio"], decimales_tendencia),
                         )
                         m3.metric(
                             "Desviación estándar",
                             formatear_numero(
                                 resumen["desviacion"],
-                                4,
+                                decimales_tendencia,
                             ),
                         )
                         m4.metric(
@@ -717,17 +744,17 @@ with tabs[4]:
                         m5, m6, m7, m8 = st.columns(4)
                         m5.metric(
                             "Mínimo",
-                            formatear_numero(resumen["minimo"], 4),
+                            formatear_numero(resumen["minimo"], decimales_tendencia),
                         )
                         m6.metric(
                             "Máximo",
-                            formatear_numero(resumen["maximo"], 4),
+                            formatear_numero(resumen["maximo"], decimales_tendencia),
                         )
                         m7.metric(
                             "Error promedio",
                             formatear_numero(
                                 resumen["error_promedio"],
-                                4,
+                                decimales_tendencia,
                             ),
                         )
                         m8.metric(
@@ -739,6 +766,7 @@ with tabs[4]:
                             df_punto,
                             punto_sel,
                             unidad_sel,
+                            decimales_tendencia,
                         )
                         st.plotly_chart(
                             figura,
@@ -763,8 +791,26 @@ with tabs[4]:
                             if columna in df_punto.columns
                         ]
 
+                        tabla_resultados = df_punto[columnas_tabla].copy()
+
+                        for columna_num in [
+                            "resultado",
+                            "error",
+                            "limite_inferior",
+                            "limite_superior",
+                        ]:
+                            if columna_num in tabla_resultados.columns:
+                                tabla_resultados[columna_num] = (
+                                    tabla_resultados[columna_num].apply(
+                                        lambda valor: formatear_numero(
+                                            valor,
+                                            decimales_tendencia,
+                                        )
+                                    )
+                                )
+
                         st.dataframe(
-                            df_punto[columnas_tabla],
+                            tabla_resultados,
                             width="stretch",
                             hide_index=True,
                         )
@@ -779,6 +825,7 @@ with tabs[4]:
                                 "valor_nominal_g_patron"
                             ),
                             "unidad": unidad_sel,
+                            "decimales": decimales_tendencia,
                             "fecha_vencimiento_calibracion": (
                                 patron_fila.get(
                                     "fecha_vencimiento_calibracion"
