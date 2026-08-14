@@ -783,30 +783,14 @@ fecha_hora_registro = combinar_fecha_hora(fecha_registro, hora_registro)
 
 st.markdown("### 2. Selección del equipo")
 
-
-def limpiar_widgets_tecnicos():
-    prefijos = ("resultado_", "obs_tipo_", "obs_txt_")
-    for clave in list(st.session_state.keys()):
-        if clave.startswith(prefijos):
-            st.session_state.pop(clave, None)
-
-
-if "selector_equipo_verificacion" not in st.session_state:
-    st.session_state["selector_equipo_verificacion"] = None
-
-if "_equipo_contexto_verificacion" not in st.session_state:
-    st.session_state["_equipo_contexto_verificacion"] = None
-
-
 col_equipo, col_vista = st.columns([3, 1])
 
 with col_equipo:
-    st.selectbox(
+    equipo_sel = st.selectbox(
         "Seleccione el equipo que desea verificar",
-        equipos["descripcion"].tolist(),
+        options=equipos["descripcion"].tolist(),
         index=None,
         placeholder="Seleccione un equipo...",
-        key="selector_equipo_verificacion",
     )
 
 with col_vista:
@@ -817,14 +801,7 @@ with col_vista:
         key="tarjetas_por_fila_verificacion",
     )
 
-
-equipo_sel = st.session_state.get("selector_equipo_verificacion")
-
 if not equipo_sel:
-    if st.session_state.get("_equipo_contexto_verificacion") is not None:
-        limpiar_widgets_tecnicos()
-        st.session_state["_equipo_contexto_verificacion"] = None
-
     st.info(
         "Seleccione un equipo para cargar su identificación "
         "y sus puntos de verificación."
@@ -832,23 +809,16 @@ if not equipo_sel:
     pie_pagina()
     st.stop()
 
-
+# ÚNICA FUENTE DE VERDAD:
+# el valor actual devuelto por el selector.
 codigo_equipo = normalizar_codigo(
     str(equipo_sel).split(" · ", 1)[0]
 )
 
-codigo_contexto = st.session_state.get(
-    "_equipo_contexto_verificacion"
-)
-
-if codigo_contexto != codigo_equipo:
-    limpiar_widgets_tecnicos()
-    st.session_state["_equipo_contexto_verificacion"] = codigo_equipo
-    st.rerun()
-
-
 coincidencias = equipos[
-    equipos["codigo_equipo"].apply(normalizar_codigo).eq(codigo_equipo)
+    equipos["codigo_equipo"]
+    .apply(normalizar_codigo)
+    .eq(codigo_equipo)
 ]
 
 if coincidencias.empty:
@@ -858,6 +828,38 @@ if coincidencias.empty:
     st.stop()
 
 equipo_info = coincidencias.iloc[0].to_dict()
+
+# Los puntos se calculan desde el mismo código en este mismo render.
+puntos_equipo = puntos[
+    puntos["codigo_equipo"]
+    .apply(normalizar_codigo)
+    .eq(codigo_equipo)
+].copy()
+
+# Diagnóstico temporal V5.
+codigos_puntos = []
+if (
+    not puntos_equipo.empty
+    and "codigo_equipo" in puntos_equipo.columns
+):
+    codigos_puntos = (
+        puntos_equipo["codigo_equipo"]
+        .apply(normalizar_codigo)
+        .dropna()
+        .astype(str)
+        .drop_duplicates()
+        .tolist()
+    )
+
+st.caption(
+    "🔎 Diagnóstico V5 · "
+    f"Selector: {codigo_equipo} · "
+    f"Equipo cargado: "
+    f"{normalizar_codigo(equipo_info.get('codigo_equipo'))} · "
+    f"Puntos encontrados: {len(puntos_equipo)} · "
+    f"Código(s) de puntos: "
+    f"{', '.join(codigos_puntos) if codigos_puntos else 'ninguno'}"
+)
 
 st.markdown("### 3. Identificación del equipo")
 
@@ -908,12 +910,6 @@ with st.container(border=True):
     )
 
 st.divider()
-
-puntos_equipo = puntos[
-    puntos["codigo_equipo"]
-    .apply(normalizar_codigo)
-    .eq(codigo_equipo)
-].copy()
 
 if puntos_equipo.empty:
     st.warning("Este equipo no tiene puntos de verificación configurados.")
