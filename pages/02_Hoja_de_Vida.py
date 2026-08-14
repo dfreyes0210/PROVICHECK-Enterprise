@@ -13,6 +13,10 @@ from utils.ui import (
     sidebar_pro,
 )
 from utils.formatos import formatear_numero
+from utils.fotos_equipos import (
+    guardar_foto_equipo,
+    leer_foto_equipo,
+)
 from utils.data import cargar_hoja
 from utils.reportes_pdf import generar_informe_tendencia_pdf
 from utils.documentos import (
@@ -469,8 +473,66 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     with st.container(border=True):
         st.markdown("### 📷 Equipo")
-        st.info("Fotografía pendiente")
-        st.info("Código QR pendiente")
+
+        foto_equipo = leer_foto_equipo(codigo)
+
+        if foto_equipo:
+            st.image(
+                foto_equipo,
+                caption=f"{codigo} · {nombre}",
+                width="stretch",
+            )
+        else:
+            st.info("Este equipo aún no tiene fotografía.")
+
+        usuario_foto = str(
+            st.session_state.get(
+                "nombre_usuario",
+                st.session_state.get("usuario", ""),
+            )
+        )
+
+        with st.expander(
+            "📤 Cargar o reemplazar fotografía",
+            expanded=not bool(foto_equipo),
+        ):
+            archivo_foto = st.file_uploader(
+                "Seleccione la fotografía del equipo",
+                type=["jpg", "jpeg", "png", "webp"],
+                key=f"foto_equipo_{codigo}",
+                help="Formatos permitidos: JPG, PNG y WEBP. Máximo 6 MB.",
+            )
+
+            if archivo_foto is not None:
+                st.image(
+                    archivo_foto,
+                    caption="Vista previa",
+                    width="stretch",
+                )
+
+                if st.button(
+                    "💾 Guardar fotografía",
+                    type="primary",
+                    width="stretch",
+                    key=f"guardar_foto_equipo_{codigo}",
+                ):
+                    try:
+                        guardar_foto_equipo(
+                            codigo_equipo=codigo,
+                            archivo_subido=archivo_foto,
+                            usuario=usuario_foto,
+                        )
+                        st.success(
+                            "Fotografía guardada correctamente en PROVICHECK."
+                        )
+                        st.rerun()
+                    except Exception as exc:
+                        st.error(
+                            "No fue posible guardar la fotografía. "
+                            f"Detalle: {exc}"
+                        )
+
+        st.caption("QR del equipo: siguiente etapa")
 
 with col2:
     with st.container(border=True):
