@@ -17,6 +17,11 @@ from utils.fotos_equipos import (
     guardar_foto_equipo,
     leer_foto_equipo,
 )
+from utils.qr_equipos import (
+    construir_url_equipo,
+    generar_etiqueta_equipo_pdf,
+    generar_qr_png,
+)
 from utils.data import cargar_hoja
 from utils.reportes_pdf import generar_informe_tendencia_pdf
 from utils.documentos import (
@@ -485,6 +490,79 @@ with col1:
         else:
             st.info("Este equipo aún no tiene fotografía.")
 
+        # -------------------------------------------------------------
+        # QR AUTOMÁTICO DEL EQUIPO
+        # -------------------------------------------------------------
+        st.markdown("#### Código QR del equipo")
+
+        try:
+            url_publica = str(
+                st.secrets["app"]["public_url"]
+            ).strip()
+        except Exception:
+            url_publica = ""
+
+        qr_png = None
+        etiqueta_pdf = None
+
+        if not url_publica:
+            st.warning(
+                "Falta configurar app.public_url en Streamlit Secrets "
+                "para activar el QR."
+            )
+        else:
+            try:
+                url_qr = construir_url_equipo(
+                    url_publica,
+                    codigo,
+                )
+                qr_png = generar_qr_png(url_qr)
+
+                st.image(
+                    qr_png,
+                    caption=f"QR · Equipo {codigo}",
+                    width="stretch",
+                )
+
+                etiqueta_pdf = generar_etiqueta_equipo_pdf(
+                    codigo_equipo=codigo,
+                    nombre_equipo=nombre,
+                    qr_png=qr_png,
+                )
+
+                q1, q2 = st.columns(2)
+
+                with q1:
+                    st.download_button(
+                        "⬇️ Descargar QR",
+                        data=qr_png,
+                        file_name=f"PROVICHECK_QR_{codigo}.png",
+                        mime="image/png",
+                        width="stretch",
+                        key=f"descargar_qr_{codigo}",
+                    )
+
+                with q2:
+                    st.download_button(
+                        "🖨️ Etiqueta PDF",
+                        data=etiqueta_pdf,
+                        file_name=f"PROVICHECK_Etiqueta_{codigo}.pdf",
+                        mime="application/pdf",
+                        width="stretch",
+                        key=f"etiqueta_qr_{codigo}",
+                    )
+
+                st.caption(
+                    "El QR permanece válido mientras se conserve "
+                    "el código del equipo."
+                )
+
+            except Exception as exc:
+                st.error(
+                    "No fue posible generar el QR del equipo. "
+                    f"Detalle: {exc}"
+                )
+
         usuario_foto = str(
             st.session_state.get(
                 "nombre_usuario",
@@ -531,8 +609,6 @@ with col1:
                             "No fue posible guardar la fotografía. "
                             f"Detalle: {exc}"
                         )
-
-        st.caption("QR del equipo: siguiente etapa")
 
 with col2:
     with st.container(border=True):

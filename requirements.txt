@@ -3,5 +3,6 @@ pandas
 openpyxl
 plotly
 matplotlib
-reportlab
+reportlab>=4.0
 supabase
+qrcode[pil]>=7.4
