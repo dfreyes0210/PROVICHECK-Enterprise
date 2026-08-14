@@ -473,7 +473,12 @@ st.subheader(f"{codigo} · {nombre}")
 
 st.divider()
 
-col1, col2, col3 = st.columns([1, 2, 1])
+# ---------------------------------------------------------------------
+# CABECERA DEL EQUIPO
+# ---------------------------------------------------------------------
+
+# Fila superior: fotografía + identidad + estado
+col1, col2, col3 = st.columns([1, 2.25, 1])
 
 with col1:
     with st.container(border=True):
@@ -490,21 +495,45 @@ with col1:
         else:
             st.info("Este equipo aún no tiene fotografía.")
 
-        # -------------------------------------------------------------
-        # QR AUTOMÁTICO DEL EQUIPO
-        # -------------------------------------------------------------
-        st.markdown("#### Código QR del equipo")
+with col2:
+    with st.container(border=True):
+        st.markdown("### Identidad técnica")
+        st.write(f"**Código:** {codigo}")
+        st.write(f"**Nombre:** {nombre}")
+        st.write(f"**Marca:** {marca}")
+        st.write(f"**Modelo:** {modelo}")
+        st.write(f"**Serie:** {serie}")
+        st.write(f"**Laboratorio:** {laboratorio}")
+        st.write(f"**Ubicación:** {ubicacion}")
+        st.write(f"**Responsable:** {responsable}")
 
-        try:
-            url_publica = str(
-                st.secrets["app"]["public_url"]
-            ).strip()
-        except Exception:
-            url_publica = ""
+with col3:
+    with st.container(border=True):
+        st.markdown("### Estado")
+        st.metric("Estado", estado)
+        st.metric("Criticidad", criticidad)
+        st.metric("Frecuencia", frecuencia)
 
-        qr_png = None
-        etiqueta_pdf = None
+# ---------------------------------------------------------------------
+# FILA INFERIOR COMPACTA: QR + ACCIONES
+# ---------------------------------------------------------------------
 
+with st.container(border=True):
+    st.markdown("### 🔗 Identificación digital del equipo")
+
+    q_col1, q_col2, q_col3 = st.columns([1.15, 1.15, 2.7])
+
+    try:
+        url_publica = str(
+            st.secrets["app"]["public_url"]
+        ).strip()
+    except Exception:
+        url_publica = ""
+
+    qr_png = None
+    etiqueta_pdf = None
+
+    with q_col1:
         if not url_publica:
             st.warning(
                 "Falta configurar app.public_url en Streamlit Secrets "
@@ -521,36 +550,41 @@ with col1:
                 st.image(
                     qr_png,
                     caption=f"QR · Equipo {codigo}",
-                    width="stretch",
+                    width=145,
                 )
 
+            except Exception as exc:
+                st.error(
+                    "No fue posible generar el QR del equipo. "
+                    f"Detalle: {exc}"
+                )
+
+    with q_col2:
+        if qr_png:
+            try:
                 etiqueta_pdf = generar_etiqueta_equipo_pdf(
                     codigo_equipo=codigo,
                     nombre_equipo=nombre,
                     qr_png=qr_png,
                 )
 
-                q1, q2 = st.columns(2)
+                st.download_button(
+                    "⬇️ Descargar QR",
+                    data=qr_png,
+                    file_name=f"PROVICHECK_QR_{codigo}.png",
+                    mime="image/png",
+                    width="stretch",
+                    key=f"descargar_qr_{codigo}",
+                )
 
-                with q1:
-                    st.download_button(
-                        "⬇️ Descargar QR",
-                        data=qr_png,
-                        file_name=f"PROVICHECK_QR_{codigo}.png",
-                        mime="image/png",
-                        width="stretch",
-                        key=f"descargar_qr_{codigo}",
-                    )
-
-                with q2:
-                    st.download_button(
-                        "🖨️ Etiqueta PDF",
-                        data=etiqueta_pdf,
-                        file_name=f"PROVICHECK_Etiqueta_{codigo}.pdf",
-                        mime="application/pdf",
-                        width="stretch",
-                        key=f"etiqueta_qr_{codigo}",
-                    )
+                st.download_button(
+                    "🖨️ Etiqueta PDF",
+                    data=etiqueta_pdf,
+                    file_name=f"PROVICHECK_Etiqueta_{codigo}.pdf",
+                    mime="application/pdf",
+                    width="stretch",
+                    key=f"etiqueta_qr_{codigo}",
+                )
 
                 st.caption(
                     "El QR permanece válido mientras se conserve "
@@ -559,9 +593,14 @@ with col1:
 
             except Exception as exc:
                 st.error(
-                    "No fue posible generar el QR del equipo. "
+                    "No fue posible generar la etiqueta del equipo. "
                     f"Detalle: {exc}"
                 )
+        else:
+            st.info("QR no disponible.")
+
+    with q_col3:
+        st.markdown("#### 📤 Fotografía del equipo")
 
         usuario_foto = str(
             st.session_state.get(
@@ -571,7 +610,7 @@ with col1:
         )
 
         with st.expander(
-            "📤 Cargar o reemplazar fotografía",
+            "Cargar o reemplazar fotografía",
             expanded=not bool(foto_equipo),
         ):
             archivo_foto = st.file_uploader(
@@ -585,7 +624,7 @@ with col1:
                 st.image(
                     archivo_foto,
                     caption="Vista previa",
-                    width="stretch",
+                    width=220,
                 )
 
                 if st.button(
@@ -609,25 +648,6 @@ with col1:
                             "No fue posible guardar la fotografía. "
                             f"Detalle: {exc}"
                         )
-
-with col2:
-    with st.container(border=True):
-        st.markdown("### Identidad técnica")
-        st.write(f"**Código:** {codigo}")
-        st.write(f"**Nombre:** {nombre}")
-        st.write(f"**Marca:** {marca}")
-        st.write(f"**Modelo:** {modelo}")
-        st.write(f"**Serie:** {serie}")
-        st.write(f"**Laboratorio:** {laboratorio}")
-        st.write(f"**Ubicación:** {ubicacion}")
-        st.write(f"**Responsable:** {responsable}")
-
-with col3:
-    with st.container(border=True):
-        st.markdown("### Estado")
-        st.metric("Estado", estado)
-        st.metric("Criticidad", criticidad)
-        st.metric("Frecuencia", frecuencia)
 
 st.divider()
 
