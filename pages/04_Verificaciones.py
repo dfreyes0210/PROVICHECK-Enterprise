@@ -1271,4 +1271,4 @@ if guardar:
     else:
         st.error(mensaje)
 
-pie_pagina()
+pie_pagina()    
