@@ -786,12 +786,47 @@ st.markdown("### 2. Selección del equipo")
 col_equipo, col_vista = st.columns([3, 1])
 
 with col_equipo:
+    opciones_equipos = equipos["descripcion"].tolist()
+
+    # Si se llegó desde un QR, buscar el equipo dentro del catálogo ya
+    # filtrado por permisos. Así un analista nunca puede saltarse su alcance.
+    codigo_qr = normalizar_codigo(
+        st.session_state.get("equipo_qr_verificacion", "")
+    )
+
+    indice_qr = None
+
+    if codigo_qr:
+        for indice, descripcion in enumerate(opciones_equipos):
+            codigo_opcion = normalizar_codigo(
+                str(descripcion).split(" · ", 1)[0]
+            )
+            if codigo_opcion == codigo_qr:
+                indice_qr = indice
+                break
+
+        if indice_qr is None:
+            st.warning(
+                f"El equipo {codigo_qr} no existe o no está autorizado "
+                "para el usuario actual."
+            )
+            st.session_state.pop("equipo_qr_verificacion", None)
+
     equipo_sel = st.selectbox(
         "Seleccione el equipo que desea verificar",
-        options=equipos["descripcion"].tolist(),
-        index=None,
+        options=opciones_equipos,
+        index=indice_qr,
         placeholder="Seleccione un equipo...",
+        key="selector_equipo_verificacion",
     )
+
+    if indice_qr is not None:
+        st.success(
+            f"📱 Equipo {codigo_qr} cargado automáticamente desde el código QR."
+        )
+        # El destino ya fue consumido. El selectbox conserva el equipo
+        # seleccionado durante esta sesión de la página.
+        st.session_state.pop("equipo_qr_verificacion", None)
 
 with col_vista:
     tarjetas_por_fila = st.selectbox(

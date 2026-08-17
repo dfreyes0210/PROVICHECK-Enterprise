@@ -134,6 +134,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+def normalizar_codigo(valor):
+    texto = str(valor or "").strip()
+    if (
+        texto.endswith(".0")
+        and texto[:-2].replace("-", "").isdigit()
+    ):
+        return texto[:-2]
+    return texto
+
+
+# ---------------------------------------------------------------------
+# DESTINO RECIBIDO DESDE QR
+# ---------------------------------------------------------------------
+# El QR usa ?equipo=<codigo>. Se conserva en session_state antes del
+# login para poder continuar hacia Verificaciones después de autenticar.
+equipo_qr = normalizar_codigo(st.query_params.get("equipo", ""))
+
+if equipo_qr:
+    st.session_state["qr_equipo_pendiente"] = equipo_qr
+
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
 
@@ -144,18 +164,20 @@ if not st.session_state["autenticado"]:
         login_limpio()
     st.stop()
 
+# Si el usuario llegó mediante QR y ya está autenticado, enviarlo a
+# Verificaciones. El código queda disponible para precargar el selector.
+equipo_qr_pendiente = normalizar_codigo(
+    st.session_state.get("qr_equipo_pendiente", "")
+)
+
+if equipo_qr_pendiente:
+    st.session_state["equipo_qr_verificacion"] = equipo_qr_pendiente
+    st.session_state.pop("qr_equipo_pendiente", None)
+    st.query_params.clear()
+    st.switch_page("pages/04_Verificaciones.py")
+
 sidebar_pro()
 encabezado()
-
-
-def normalizar_codigo(valor):
-    texto = str(valor or "").strip()
-    if (
-        texto.endswith(".0")
-        and texto[:-2].replace("-", "").isdigit()
-    ):
-        return texto[:-2]
-    return texto
 
 
 def abrir_equipo(codigo):
