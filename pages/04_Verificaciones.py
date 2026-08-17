@@ -836,31 +836,6 @@ puntos_equipo = puntos[
     .eq(codigo_equipo)
 ].copy()
 
-# Diagnóstico temporal V5.
-codigos_puntos = []
-if (
-    not puntos_equipo.empty
-    and "codigo_equipo" in puntos_equipo.columns
-):
-    codigos_puntos = (
-        puntos_equipo["codigo_equipo"]
-        .apply(normalizar_codigo)
-        .dropna()
-        .astype(str)
-        .drop_duplicates()
-        .tolist()
-    )
-
-st.caption(
-    "🔎 Diagnóstico V5 · "
-    f"Selector: {codigo_equipo} · "
-    f"Equipo cargado: "
-    f"{normalizar_codigo(equipo_info.get('codigo_equipo'))} · "
-    f"Puntos encontrados: {len(puntos_equipo)} · "
-    f"Código(s) de puntos: "
-    f"{', '.join(codigos_puntos) if codigos_puntos else 'ninguno'}"
-)
-
 st.markdown("### 3. Identificación del equipo")
 
 analista_sesion = str(
@@ -986,6 +961,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
             resultado_capturado = st.number_input(
                 "Resultado observado",
+                value=None,
                 key=f"resultado_{codigo_equipo}_{id_punto}",
                 format=f"%.{decimales_punto}f",
                 disabled=info_patron["bloqueado"],
@@ -1271,4 +1247,4 @@ if guardar:
     else:
         st.error(mensaje)
 
-pie_pagina()    
+pie_pagina()
