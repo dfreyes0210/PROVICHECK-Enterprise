@@ -302,8 +302,42 @@ def preparar_patrones_equipo(codigo_equipo):
     )
 
 
-def crear_figura_tendencia(df_punto, punto_sel, unidad, decimales=4):
+def es_formato_porcentaje(formato_visual):
+    return str(formato_visual or "").strip().upper() == "PORCENTAJE"
+
+
+def valor_para_visualizacion(valor, formato_visual):
+    numero = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+    if pd.isna(numero):
+        return None
+    return float(numero) * 100 if es_formato_porcentaje(formato_visual) else float(numero)
+
+
+def serie_para_visualizacion(serie, formato_visual):
+    datos = pd.to_numeric(serie, errors="coerce")
+    return datos * 100 if es_formato_porcentaje(formato_visual) else datos
+
+
+def unidad_para_visualizacion(unidad, formato_visual):
+    return "%" if es_formato_porcentaje(formato_visual) else str(unidad or "").strip()
+
+
+def crear_figura_tendencia(df_punto, punto_sel, unidad, decimales=4, formato_visual="NUMERO"):
     figura = go.Figure()
+    unidad_visual = unidad_para_visualizacion(unidad, formato_visual)
+    df_punto = df_punto.copy()
+
+    for columna in [
+        "resultado",
+        "valor_nominal",
+        "limite_superior",
+        "limite_inferior",
+    ]:
+        if columna in df_punto.columns:
+            df_punto[columna] = serie_para_visualizacion(
+                df_punto[columna],
+                formato_visual,
+            )
 
     figura.add_trace(
         go.Scatter(
@@ -374,7 +408,11 @@ def crear_figura_tendencia(df_punto, punto_sel, unidad, decimales=4):
         height=520,
         title=f"Tendencia histórica - {punto_sel}",
         xaxis_title="Fecha y hora",
-        yaxis_title=f"Resultado ({unidad})" if unidad else "Resultado",
+        yaxis_title=(
+            f"Resultado ({unidad_visual})"
+            if unidad_visual
+            else "Resultado"
+        ),
         legend_title="Serie",
         hovermode="x unified",
         margin={"l": 40, "r": 25, "t": 65, "b": 45},
@@ -385,14 +423,14 @@ def crear_figura_tendencia(df_punto, punto_sel, unidad, decimales=4):
     return figura
 
 
-def calcular_resumen_tendencia(df_punto):
-    resultados = pd.to_numeric(
+def calcular_resumen_tendencia(df_punto, formato_visual="NUMERO"):
+    resultados = serie_para_visualizacion(
         df_punto["resultado"],
-        errors="coerce",
+        formato_visual,
     ).dropna()
-    errores = pd.to_numeric(
+    errores = serie_para_visualizacion(
         df_punto["error"],
-        errors="coerce",
+        formato_visual,
     ).dropna()
 
     total = len(df_punto)
@@ -888,6 +926,14 @@ with tabs[4]:
                         patron_fila,
                         por_defecto=4,
                     )
+                    formato_visual_tendencia = str(
+                        patron_fila.get("formato_visual", "NUMERO")
+                        or "NUMERO"
+                    ).strip().upper()
+                    unidad_visual_sel = unidad_para_visualizacion(
+                        unidad_sel,
+                        formato_visual_tendencia,
+                    )
 
                     df_punto = df_tendencia[
                         df_tendencia["punto"].astype(str)
@@ -918,11 +964,14 @@ with tabs[4]:
                             "Valor nominal",
                             (
                                 f"{formatear_numero(
-                                    patron_fila.get(
-                                        'valor_nominal_g_patron'
+                                    valor_para_visualizacion(
+                                        patron_fila.get(
+                                            'valor_nominal_g_patron'
+                                        ),
+                                        formato_visual_tendencia,
                                     ),
                                     decimales_tendencia,
-                                )} {unidad_sel}"
+                                )} {unidad_visual_sel}"
                             ),
                         )
                         p3.metric(
@@ -951,7 +1000,7 @@ with tabs[4]:
                             "en el periodo seleccionado."
                         )
                     else:
-                        resumen = calcular_resumen_tendencia(df_punto)
+                        resumen = calcular_resumen_tendencia(df_punto, formato_visual_tendencia)
 
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Registros", resumen["total"])
@@ -997,6 +1046,7 @@ with tabs[4]:
                             punto_sel,
                             unidad_sel,
                             decimales_tendencia,
+                            formato_visual_tendencia,
                         )
                         st.plotly_chart(
                             figura,
@@ -1033,7 +1083,10 @@ with tabs[4]:
                                 tabla_resultados[columna_num] = (
                                     tabla_resultados[columna_num].apply(
                                         lambda valor: formatear_numero(
-                                            valor,
+                                            valor_para_visualizacion(
+                                                valor,
+                                                formato_visual_tendencia,
+                                            ),
                                             decimales_tendencia,
                                         )
                                     )
@@ -1054,8 +1107,9 @@ with tabs[4]:
                             "valor_nominal_g": patron_fila.get(
                                 "valor_nominal_g_patron"
                             ),
-                            "unidad": unidad_sel,
+                            "unidad": unidad_visual_sel,
                             "decimales": decimales_tendencia,
+                            "formato_visual": formato_visual_tendencia,
                             "fecha_vencimiento_calibracion": (
                                 patron_fila.get(
                                     "fecha_vencimiento_calibracion"

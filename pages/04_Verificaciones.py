@@ -455,7 +455,29 @@ def evaluar_patron(
     return resultado
 
 
-def mostrar_panel_patron(info_patron, decimales):
+def es_formato_porcentaje(formato_visual):
+    return str(formato_visual or "").strip().upper() == "PORCENTAJE"
+
+
+def valor_para_visualizacion(valor, formato_visual):
+    numero = numero_seguro(valor)
+    if numero is None:
+        return None
+    return numero * 100 if es_formato_porcentaje(formato_visual) else numero
+
+
+def valor_desde_captura(valor, formato_visual):
+    numero = numero_seguro(valor)
+    if numero is None:
+        return None
+    return numero / 100 if es_formato_porcentaje(formato_visual) else numero
+
+
+def unidad_para_visualizacion(unidad, formato_visual):
+    return "%" if es_formato_porcentaje(formato_visual) else str(unidad or "").strip()
+
+
+def mostrar_panel_patron(info_patron, decimales, formato_visual="NUMERO"):
     if not info_patron["requiere_patron"]:
         st.markdown(
             """
@@ -470,11 +492,17 @@ def mostrar_panel_patron(info_patron, decimales):
         )
         return
 
+    unidad_patron = unidad_para_visualizacion(
+        info_patron.get("unidad", ""),
+        formato_visual,
+    )
     valor_patron = formatear_numero(
-        info_patron.get("valor_nominal"),
+        valor_para_visualizacion(
+            info_patron.get("valor_nominal"),
+            formato_visual,
+        ),
         decimales,
     )
-    unidad_patron = info_patron.get("unidad", "")
     relacion_texto = (
         "Confirmada"
         if info_patron.get("relacion_valida")
@@ -513,10 +541,21 @@ def mostrar_valores_tecnicos(
     limite_superior,
     unidad,
     decimales,
+    formato_visual="NUMERO",
 ):
-    patron_texto = formatear_numero(valor_nominal, decimales)
-    inferior_texto = formatear_numero(limite_inferior, decimales)
-    superior_texto = formatear_numero(limite_superior, decimales)
+    unidad_mostrada = unidad_para_visualizacion(unidad, formato_visual)
+    patron_texto = formatear_numero(
+        valor_para_visualizacion(valor_nominal, formato_visual),
+        decimales,
+    )
+    inferior_texto = formatear_numero(
+        valor_para_visualizacion(limite_inferior, formato_visual),
+        decimales,
+    )
+    superior_texto = formatear_numero(
+        valor_para_visualizacion(limite_superior, formato_visual),
+        decimales,
+    )
 
     st.markdown(
         f"""
@@ -524,19 +563,19 @@ def mostrar_valores_tecnicos(
             <div class="provicheck-tech-box">
                 <div class="provicheck-tech-label">Patrón</div>
                 <div class="provicheck-tech-value">
-                    {patron_texto} {unidad}
+                    {patron_texto} {unidad_mostrada}
                 </div>
             </div>
             <div class="provicheck-tech-box">
                 <div class="provicheck-tech-label">Límite inferior</div>
                 <div class="provicheck-tech-value">
-                    {inferior_texto} {unidad}
+                    {inferior_texto} {unidad_mostrada}
                 </div>
             </div>
             <div class="provicheck-tech-box">
                 <div class="provicheck-tech-label">Límite superior</div>
                 <div class="provicheck-tech-value">
-                    {superior_texto} {unidad}
+                    {superior_texto} {unidad_mostrada}
                 </div>
             </div>
         </div>
@@ -942,6 +981,9 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
     id_punto = punto.get("id_punto", i)
     nombre_punto = punto.get("punto_verificacion", f"Punto {i + 1}")
     nombre_chequeo = punto.get("nombre_chequeo", "Chequeo sin nombre")
+    formato_visual = str(
+        fila_original.get("formato_visual", "NUMERO") or "NUMERO"
+    ).strip().upper()
 
     decimales_punto = punto.get(
         "decimales",
@@ -957,13 +999,24 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
     decimales_punto = max(0, min(decimales_punto, 8))
 
+    nombre_punto_visual = nombre_punto
+    if es_formato_porcentaje(formato_visual):
+        numero_punto = numero_seguro(nombre_punto)
+        if numero_punto is not None:
+            nombre_punto_visual = formatear_numero(
+                valor_para_visualizacion(numero_punto, formato_visual),
+                decimales_punto,
+            )
+
+    unidad_visual = unidad_para_visualizacion(unidad, formato_visual)
+
     with columnas[i % tarjetas_por_fila]:
         with st.container(border=True):
             st.markdown(
                 f'''
                 <div class="verification-card-title">
                     <span class="verification-card-badge">📌</span>
-                    <span>{nombre_punto} {unidad}</span>
+                    <span>{nombre_punto_visual} {unidad_visual}</span>
                 </div>
                 ''',
                 unsafe_allow_html=True,
@@ -985,17 +1038,28 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 fecha_registro,
             )
 
-            mostrar_panel_patron(info_patron, decimales_punto)
+            mostrar_panel_patron(
+                info_patron,
+                decimales_punto,
+                formato_visual,
+            )
             mostrar_valores_tecnicos(
                 valor_nominal,
                 limite_inferior,
                 limite_superior,
                 unidad,
                 decimales_punto,
+                formato_visual,
+            )
+
+            etiqueta_resultado = (
+                "Resultado observado (%)"
+                if es_formato_porcentaje(formato_visual)
+                else "Resultado observado"
             )
 
             resultado_capturado = st.number_input(
-                "Resultado observado",
+                etiqueta_resultado,
                 value=None,
                 key=f"resultado_{codigo_equipo}_{id_punto}",
                 format=f"%.{decimales_punto}f",
@@ -1004,7 +1068,12 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     "Este campo está bloqueado únicamente para este punto "
                     "porque el patrón asociado no se encuentra disponible."
                     if info_patron["bloqueado"]
-                    else "Ingrese la lectura observada para este punto."
+                    else (
+                        "Ingrese el valor directamente en porcentaje. "
+                        "Ejemplo: 98.00 para 98 %."
+                        if es_formato_porcentaje(formato_visual)
+                        else "Ingrese la lectura observada para este punto."
+                    )
                 ),
             )
 
@@ -1053,7 +1122,10 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     else observacion_tipo
                 )
 
-            resultado_num = numero_seguro(resultado)
+            resultado_num = valor_desde_captura(
+                resultado,
+                formato_visual,
+            )
             error_calculado = (
                 resultado_num - valor_nominal
                 if resultado_num is not None and valor_nominal is not None
@@ -1080,15 +1152,30 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
 
             st.write(
                 f"**Error calculado:** "
-                f"{formatear_numero(evaluacion.get('error'), decimales_punto)} "
-                f"{unidad}"
+                f"{formatear_numero(
+                    valor_para_visualizacion(
+                        evaluacion.get('error'),
+                        formato_visual,
+                    ),
+                    decimales_punto,
+                )} {unidad_visual}"
             )
             st.write(
                 f"**Intervalo real:** "
-                f"{formatear_numero(evaluacion.get('limite_inferior_real'), decimales_punto)} "
-                f"a "
-                f"{formatear_numero(evaluacion.get('limite_superior_real'), decimales_punto)} "
-                f"{unidad}"
+                f"{formatear_numero(
+                    valor_para_visualizacion(
+                        evaluacion.get('limite_inferior_real'),
+                        formato_visual,
+                    ),
+                    decimales_punto,
+                )} a "
+                f"{formatear_numero(
+                    valor_para_visualizacion(
+                        evaluacion.get('limite_superior_real'),
+                        formato_visual,
+                    ),
+                    decimales_punto,
+                )} {unidad_visual}"
             )
 
             if info_patron["bloqueado"]:
@@ -1116,8 +1203,9 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     "punto": nombre_punto,
                     "nombre_chequeo": nombre_chequeo,
                     "valor_nominal": valor_nominal,
-                    "resultado": resultado,
+                    "resultado": resultado_num,
                     "error": evaluacion.get("error"),
+                    "formato_visual": formato_visual,
                     "limite_inferior": evaluacion.get(
                         "limite_inferior_real"
                     ),
