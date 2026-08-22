@@ -285,6 +285,7 @@ def preparar_patrones_equipo(codigo_equipo):
             "codigo_patron",
             "descripcion",
             "marca",
+            "lote_patron",
             "valor_nominal_g",
             "unidad",
             "fecha_vencimiento_calibracion",
@@ -955,7 +956,7 @@ with tabs[4]:
 
                     with st.container(border=True):
                         st.markdown("#### 🔬 Patrón seleccionado")
-                        p1, p2, p3, p4 = st.columns(4)
+                        p1, p2, p3, p4, p5 = st.columns(5)
                         p1.metric(
                             "Código",
                             codigo_patron_sel,
@@ -975,6 +976,13 @@ with tabs[4]:
                             ),
                         )
                         p3.metric(
+                            "Lote actual",
+                            texto_seguro(
+                                patron_fila.get("lote_patron"),
+                                "No registrado",
+                            ),
+                        )
+                        p4.metric(
                             "Vencimiento",
                             texto_seguro(
                                 patron_fila.get(
@@ -982,7 +990,7 @@ with tabs[4]:
                                 )
                             ),
                         )
-                        p4.metric(
+                        p5.metric(
                             "Estado",
                             texto_seguro(
                                 patron_fila.get("estado_patron")
@@ -993,6 +1001,29 @@ with tabs[4]:
                             f"{texto_seguro(patron_fila.get('descripcion'))} · "
                             f"Marca: {texto_seguro(patron_fila.get('marca'))}"
                         )
+
+                    if not df_punto.empty and "lote_patron" in df_punto.columns:
+                        lotes_periodo = (
+                            df_punto["lote_patron"]
+                            .fillna("")
+                            .astype(str)
+                            .str.strip()
+                        )
+                        lotes_periodo = [
+                            lote
+                            for lote in lotes_periodo.drop_duplicates().tolist()
+                            if lote and lote.lower() not in {"nan", "none", "nat"}
+                        ]
+                        if lotes_periodo:
+                            st.caption(
+                                "🧪 Lote(s) realmente registrados en el período: "
+                                + " · ".join(lotes_periodo)
+                            )
+                        else:
+                            st.caption(
+                                "🧪 Los registros históricos de este período "
+                                "no contienen lote de patrón."
+                            )
 
                     if df_punto.empty:
                         st.warning(
@@ -1061,6 +1092,7 @@ with tabs[4]:
                             "error",
                             "limite_inferior",
                             "limite_superior",
+                            "lote_patron",
                             "estado_punto",
                             "responsable",
                             "observacion",
@@ -1104,6 +1136,7 @@ with tabs[4]:
                                 "descripcion"
                             ),
                             "marca": patron_fila.get("marca"),
+                            "lote_patron": patron_fila.get("lote_patron"),
                             "valor_nominal_g": patron_fila.get(
                                 "valor_nominal_g_patron"
                             ),

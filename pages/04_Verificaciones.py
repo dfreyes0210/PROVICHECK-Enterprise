@@ -300,6 +300,7 @@ def evaluar_patron(
         "codigo": codigo,
         "descripcion": "",
         "marca": "",
+        "lote": "",
         "valor_nominal": None,
         "unidad": "",
         "fecha_vencimiento": None,
@@ -358,6 +359,10 @@ def evaluar_patron(
             "marca": texto_seguro(
                 datos_patron.get("marca"),
                 "Sin marca",
+            ),
+            "lote": texto_seguro(
+                datos_patron.get("lote_patron"),
+                "",
             ),
             "valor_nominal": numero_seguro(
                 datos_patron.get("valor_nominal_g")
@@ -508,6 +513,12 @@ def mostrar_panel_patron(info_patron, decimales, formato_visual="NUMERO"):
         if info_patron.get("relacion_valida")
         else "No encontrada"
     )
+    lote_patron = str(info_patron.get("lote") or "").strip()
+    lote_html = (
+        f"<br><strong>Lote:</strong> {escape(lote_patron)}"
+        if lote_patron
+        else ""
+    )
 
     st.markdown(
         f"""
@@ -520,7 +531,8 @@ def mostrar_panel_patron(info_patron, decimales, formato_visual="NUMERO"):
             <strong>Descripción:</strong>
             {info_patron.get('descripcion') or 'Sin información'}<br>
             <strong>Marca:</strong>
-            {info_patron.get('marca') or 'Sin información'}<br>
+            {info_patron.get('marca') or 'Sin información'}
+            {lote_html}<br>
             <strong>Valor nominal:</strong>
             {valor_patron} {unidad_patron}<br>
             <strong>Vencimiento:</strong>
@@ -1215,6 +1227,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     "estado_punto": estado_punto,
                     "observacion": observacion_final,
                     "codigo_patron": info_patron.get("codigo", ""),
+                    "lote_patron": info_patron.get("lote", ""),
                     "estado_patron": info_patron.get("estado", ""),
                     "fecha_vencimiento_patron": (
                         info_patron["fecha_vencimiento"].isoformat()
