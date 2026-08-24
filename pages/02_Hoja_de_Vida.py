@@ -56,6 +56,11 @@ from utils.supabase_consultas import (
     consultar_detalle_sesion,
     consultar_documentos_equipo,
 )
+from utils.anulaciones import (
+    anular_punto,
+    anular_sesion,
+    puede_anular_verificaciones,
+)
 
 
 st.set_page_config(
@@ -184,6 +189,64 @@ def normalizar_codigo(valor):
         if base.replace("-", "").isdigit():
             return base
     return texto
+
+
+def es_verdadero(valor):
+    if isinstance(valor, bool):
+        return valor
+    if valor is None:
+        return False
+    return str(valor).strip().lower() in {
+        "true", "1", "si", "sí", "yes", "y", "t"
+    }
+
+
+def filtrar_sesiones_validas(df):
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+
+    salida = df.copy()
+
+    if "anulada" in salida.columns:
+        salida = salida.loc[
+            ~salida["anulada"].apply(es_verdadero)
+        ].copy()
+
+    if "estado_registro" in salida.columns:
+        estado = (
+            salida["estado_registro"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        salida = salida.loc[~estado.eq("anulada")].copy()
+
+    return salida.reset_index(drop=True)
+
+
+def filtrar_puntos_validos(df):
+    if df is None or df.empty:
+        return pd.DataFrame() if df is None else df.copy()
+
+    salida = df.copy()
+
+    if "anulado" in salida.columns:
+        salida = salida.loc[
+            ~salida["anulado"].apply(es_verdadero)
+        ].copy()
+
+    if "estado_registro" in salida.columns:
+        estado = (
+            salida["estado_registro"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        salida = salida.loc[~estado.eq("anulado")].copy()
+
+    return salida.reset_index(drop=True)
 
 
 def obtener_decimales_configurados(fila, por_defecto=4):
@@ -501,8 +564,14 @@ frecuencia = texto_seguro(
     "Sin frecuencia",
 )
 
-ultima = consultar_ultima_verificacion(codigo)
 historial = consultar_historial_equipo(codigo, limite=5000)
+historial_validas = filtrar_sesiones_validas(historial)
+
+if historial_validas.empty:
+    ultima = pd.DataFrame()
+else:
+    ultima = historial_validas.head(1).copy()
+
 eventos = consultar_eventos_equipo(codigo, limite=20)
 actualizar_estados_documentos(codigo)
 documentos = consultar_documentos_equipo(codigo)
@@ -694,7 +763,7 @@ if not ultima.empty:
     ultima_fila = ultima.iloc[0]
     ultima_fecha = ultima_fila.get("fecha", "Sin fecha")
     ultima_estado = ultima_fila.get("estado", "Sin estado")
-    total_verificaciones = len(historial)
+    total_verificaciones = len(historial_validas)
     total_eventos = len(eventos)
 else:
     ultima_fila = None
@@ -752,6 +821,7 @@ with tabs[1]:
         r4.metric("No evaluados", int(ultima_fila.get("puntos_no_evaluados", 0)))
 
         detalle = consultar_detalle_sesion(ultima_fila.get("id_sesion"))
+        detalle = filtrar_puntos_validos(detalle)
 
         st.markdown("### Detalle de la última sesión")
         if detalle.empty:
@@ -761,21 +831,292 @@ with tabs[1]:
 
 with tabs[2]:
     st.markdown("### Historial de verificaciones")
+    st.caption(
+        "El historial conserva todos los registros. Las anulaciones no "
+        "eliminan información: únicamente cambian su estado para mantener "
+        "la trazabilidad."
+    )
 
     if historial.empty:
         st.info("No hay historial registrado para este equipo.")
     else:
-        st.dataframe(historial, width="stretch", hide_index=True)
+        historial_visual = historial.copy()
+
+        historial_visual["estado_trazabilidad"] = historial_visual.apply(
+            lambda fila: (
+                "🔴 Anulada"
+                if es_verdadero(fila.get("anulada"))
+                or str(
+                    fila.get("estado_registro", "")
+                ).strip().lower() == "anulada"
+                else "🟢 Válida"
+            ),
+            axis=1,
+        )
+
+        st.dataframe(
+            historial_visual,
+            width="stretch",
+            hide_index=True,
+        )
+
+        opciones_sesion = (
+            historial["id_sesion"]
+            .dropna()
+            .astype(str)
+            .tolist()
+        )
 
         id_sesion = st.selectbox(
             "Ver detalle de sesión",
-            historial["id_sesion"].tolist(),
+            opciones_sesion,
+            key=f"historial_sesion_{codigo}",
         )
 
         detalle_hist = consultar_detalle_sesion(id_sesion)
 
         st.markdown("### Detalle seleccionado")
-        st.dataframe(detalle_hist, width="stretch", hide_index=True)
+
+        if detalle_hist.empty:
+            st.info("No se encontró detalle para la sesión seleccionada.")
+        else:
+            detalle_visual = detalle_hist.copy()
+            detalle_visual["estado_trazabilidad"] = (
+                detalle_visual.apply(
+                    lambda fila: (
+                        "🔴 Anulado"
+                        if es_verdadero(fila.get("anulado"))
+                        or str(
+                            fila.get("estado_registro", "")
+                        ).strip().lower() == "anulado"
+                        else "🟢 Válido"
+                    ),
+                    axis=1,
+                )
+            )
+
+            st.dataframe(
+                detalle_visual,
+                width="stretch",
+                hide_index=True,
+            )
+
+        if puede_anular_verificaciones():
+            fila_sesion_sel = historial[
+                historial["id_sesion"]
+                .astype(str)
+                .eq(str(id_sesion))
+            ]
+
+            sesion_ya_anulada = False
+
+            if not fila_sesion_sel.empty:
+                fila_sel = fila_sesion_sel.iloc[0]
+                sesion_ya_anulada = (
+                    es_verdadero(fila_sel.get("anulada"))
+                    or str(
+                        fila_sel.get("estado_registro", "")
+                    ).strip().lower() == "anulada"
+                )
+
+            st.divider()
+
+            with st.container(border=True):
+                st.markdown("### ⚠️ Gestión de corrección / anulación")
+                st.caption(
+                    "Disponible únicamente para Administrador y Líder. "
+                    "El registro original nunca se elimina."
+                )
+
+                if sesion_ya_anulada:
+                    st.error(
+                        "🔴 Esta sesión ya está ANULADA y se conserva "
+                        "únicamente para trazabilidad."
+                    )
+
+                    fila_sel = fila_sesion_sel.iloc[0]
+                    a1, a2, a3 = st.columns(3)
+                    a1.markdown(
+                        "**Anulada por**  \n"
+                        f"{texto_seguro(fila_sel.get('anulada_por'), '—')}"
+                    )
+                    a2.markdown(
+                        "**Fecha de anulación**  \n"
+                        f"{texto_seguro(fila_sel.get('fecha_anulacion'), '—')}"
+                    )
+                    a3.markdown(
+                        "**Motivo**  \n"
+                        f"{texto_seguro(fila_sel.get('motivo_anulacion'), '—')}"
+                    )
+
+                else:
+                    tipo_anulacion = st.radio(
+                        "Seleccione el alcance",
+                        [
+                            "Un punto de verificación",
+                            "Sesión completa",
+                        ],
+                        horizontal=True,
+                        key=f"tipo_anulacion_{codigo}_{id_sesion}",
+                    )
+
+                    punto_id_seleccionado = None
+
+                    if tipo_anulacion == "Un punto de verificación":
+                        puntos_disponibles = filtrar_puntos_validos(
+                            detalle_hist
+                        )
+
+                        if puntos_disponibles.empty:
+                            st.warning(
+                                "No existen puntos válidos disponibles "
+                                "para anulación individual."
+                            )
+
+                        elif "id" not in puntos_disponibles.columns:
+                            st.error(
+                                "El detalle no contiene el ID único del punto. "
+                                "Por seguridad no se habilita la anulación."
+                            )
+
+                        else:
+                            opciones_puntos = {}
+
+                            for _, fila_punto in puntos_disponibles.iterrows():
+                                id_detalle = int(fila_punto.get("id"))
+                                nombre_punto = texto_seguro(
+                                    fila_punto.get("punto"),
+                                    "Punto sin nombre",
+                                )
+                                resultado_punto = texto_seguro(
+                                    fila_punto.get("resultado"),
+                                    "Sin resultado",
+                                )
+                                estado_punto = texto_seguro(
+                                    fila_punto.get("estado_punto"),
+                                    "Sin estado",
+                                )
+
+                                etiqueta = (
+                                    f"{nombre_punto} · Resultado: "
+                                    f"{resultado_punto} · {estado_punto} "
+                                    f"[ID {id_detalle}]"
+                                )
+                                opciones_puntos[etiqueta] = id_detalle
+
+                            punto_etiqueta = st.selectbox(
+                                "Punto que desea anular",
+                                list(opciones_puntos.keys()),
+                                key=f"punto_anular_{codigo}_{id_sesion}",
+                            )
+
+                            punto_id_seleccionado = opciones_puntos[
+                                punto_etiqueta
+                            ]
+
+                            fila_punto_sel = puntos_disponibles[
+                                puntos_disponibles["id"]
+                                .astype(int)
+                                .eq(int(punto_id_seleccionado))
+                            ].iloc[0]
+
+                            p1, p2, p3 = st.columns(3)
+                            p1.metric(
+                                "Punto",
+                                texto_seguro(
+                                    fila_punto_sel.get("punto"),
+                                    "—",
+                                ),
+                            )
+                            p2.metric(
+                                "Resultado original",
+                                texto_seguro(
+                                    fila_punto_sel.get("resultado"),
+                                    "—",
+                                ),
+                            )
+                            p3.metric(
+                                "Estado original",
+                                texto_seguro(
+                                    fila_punto_sel.get("estado_punto"),
+                                    "—",
+                                ),
+                            )
+
+                    else:
+                        st.error(
+                            "⚠️ Se marcará como ANULADA la sesión completa. "
+                            f"Los {len(detalle_hist)} punto(s) permanecerán "
+                            "almacenados, pero serán excluidos de Tendencias "
+                            "e indicadores."
+                        )
+
+                    motivo_anulacion = st.text_area(
+                        "Motivo de la anulación *",
+                        placeholder=(
+                            "Ej.: Error de digitación del resultado observado. "
+                            "El registro correcto fue realizado posteriormente."
+                        ),
+                        key=f"motivo_anulacion_{codigo}_{id_sesion}",
+                    )
+
+                    observacion_anulacion = st.text_area(
+                        "Observación adicional",
+                        placeholder=(
+                            "Referencia de la nueva verificación u otra "
+                            "información complementaria."
+                        ),
+                        key=f"obs_anulacion_{codigo}_{id_sesion}",
+                    )
+
+                    confirmar_anulacion = st.checkbox(
+                        "Confirmo que revisé el registro original y autorizo "
+                        "la anulación sin eliminar la evidencia histórica.",
+                        key=f"confirmar_anulacion_{codigo}_{id_sesion}",
+                    )
+
+                    habilitar = (
+                        confirmar_anulacion
+                        and len(motivo_anulacion.strip()) >= 10
+                    )
+
+                    if tipo_anulacion == "Un punto de verificación":
+                        habilitar = (
+                            habilitar
+                            and punto_id_seleccionado is not None
+                        )
+
+                    if st.button(
+                        "🔴 Confirmar anulación",
+                        type="primary",
+                        width="stretch",
+                        disabled=not habilitar,
+                        key=f"ejecutar_anulacion_{codigo}_{id_sesion}",
+                    ):
+                        if tipo_anulacion == "Un punto de verificación":
+                            ok, mensaje = anular_punto(
+                                punto_id_seleccionado,
+                                motivo_anulacion,
+                                observacion_anulacion,
+                            )
+                        else:
+                            ok, mensaje = anular_sesion(
+                                id_sesion,
+                                motivo_anulacion,
+                                observacion_anulacion,
+                            )
+
+                        if ok:
+                            st.success(f"✅ {mensaje}")
+                            st.rerun()
+                        else:
+                            st.error(mensaje)
+
+        else:
+            st.caption(
+                "🔒 La anulación está disponible únicamente para "
+                "Administrador y Líder."
+            )
 
 with tabs[3]:
     st.markdown("### Bitácora del equipo")
@@ -798,9 +1139,14 @@ with tabs[4]:
     else:
         detalles = []
 
-        for _, fila_sesion in historial.iterrows():
+        for _, fila_sesion in historial_validas.iterrows():
             id_sesion_actual = fila_sesion.get("id_sesion")
             df_detalle = consultar_detalle_sesion(id_sesion_actual)
+
+            if df_detalle.empty:
+                continue
+
+            df_detalle = filtrar_puntos_validos(df_detalle)
 
             if df_detalle.empty:
                 continue
@@ -2758,5 +3104,57 @@ with tabs[7]:
                             )
 
 with tabs[8]:
-    st.markdown("### Auditoría")
-    st.info("Aquí se mostrará el historial de cambios y trazabilidad del equipo.")
+    st.markdown("### 🔍 Auditoría")
+    st.caption(
+        "Trazabilidad de correcciones y anulaciones realizadas sobre "
+        "las verificaciones del equipo."
+    )
+
+    try:
+        from utils.supabase_client import obtener_cliente_supabase
+
+        respuesta_auditoria = (
+            obtener_cliente_supabase()
+            .table("anulaciones_verificacion")
+            .select("*")
+            .eq("codigo_equipo", str(codigo).strip())
+            .order("fecha_hora", desc=True)
+            .execute()
+        )
+
+        auditoria_anulaciones = pd.DataFrame(
+            respuesta_auditoria.data or []
+        )
+
+        if auditoria_anulaciones.empty:
+            st.info(
+                "Este equipo todavía no tiene anulaciones registradas."
+            )
+        else:
+            columnas_auditoria = [
+                columna
+                for columna in [
+                    "fecha_hora",
+                    "tipo_anulacion",
+                    "id_sesion",
+                    "punto",
+                    "motivo",
+                    "usuario",
+                    "estado_anterior",
+                    "estado_nuevo",
+                    "observacion",
+                ]
+                if columna in auditoria_anulaciones.columns
+            ]
+
+            st.dataframe(
+                auditoria_anulaciones[columnas_auditoria],
+                width="stretch",
+                hide_index=True,
+            )
+
+    except Exception as exc:
+        st.warning(
+            "No fue posible consultar la auditoría de anulaciones. "
+            f"Detalle: {exc}"
+        )
