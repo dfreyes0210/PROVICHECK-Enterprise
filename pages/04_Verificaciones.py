@@ -654,6 +654,7 @@ def combinar_fecha_hora(fecha_seleccionada, hora_seleccionada):
 
 OPCIONES_OBSERVACION = [
     "Sin novedades",
+    "Punto no evaluado - justificado",
     "Patrón en calibración",
     "Patrón no disponible",
     "Patrón vencido",
@@ -1111,11 +1112,19 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 )
 
             observacion_texto = ""
-            if observacion_tipo == "Otro":
+            requiere_detalle_observacion = observacion_tipo in {
+                "Otro",
+                "Punto no evaluado - justificado",
+            }
+            if requiere_detalle_observacion:
                 observacion_texto = st.text_area(
-                    "Detalle de la observación",
+                    "Detalle obligatorio de la observación",
                     key=f"obs_txt_{codigo_equipo}_{id_punto}",
-                    placeholder="Describa la novedad encontrada.",
+                    placeholder=(
+                        "Explique por qué este punto no pudo evaluarse."
+                        if observacion_tipo == "Punto no evaluado - justificado"
+                        else "Describa la novedad encontrada."
+                    ),
                 )
 
             if info_patron["bloqueado"]:
@@ -1130,7 +1139,7 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
             else:
                 observacion_final = (
                     observacion_texto.strip()
-                    if observacion_tipo == "Otro"
+                    if requiere_detalle_observacion
                     else observacion_tipo
                 )
 
@@ -1190,15 +1199,23 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 )} {unidad_visual}"
             )
 
+            no_evaluado_justificado = (
+                info_patron["bloqueado"]
+                or observacion_tipo == "Punto no evaluado - justificado"
+            )
+
             if info_patron["bloqueado"]:
                 estado_punto = "No evaluado"
                 st.error(
                     "🔴 NO EVALUADO · El patrón asociado impide evaluar "
                     "únicamente este punto"
                 )
-            elif observacion_tipo != "Sin novedades":
+            elif observacion_tipo == "Punto no evaluado - justificado":
                 estado_punto = "No evaluado"
-                st.warning("🟡 NO EVALUADO · Existe una novedad registrada")
+                st.warning(
+                    "🟡 NO EVALUADO JUSTIFICADO · Este punto no se incluirá "
+                    "en la estadística ni en Tendencias."
+                )
             elif evaluacion.get("cumple") is True:
                 estado_punto = "Cumple"
                 st.success("🟢 CUMPLE")
@@ -1235,6 +1252,9 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                         else ""
                     ),
                     "patron_bloqueado": info_patron.get("bloqueado", False),
+                    "no_evaluado_justificado": no_evaluado_justificado,
+                    "tipo_observacion": observacion_tipo,
+                    "detalle_observacion": observacion_texto.strip(),
                 }
             )
 
@@ -1261,10 +1281,24 @@ r2.metric("Cumplen", cumplen)
 r3.metric("No cumplen", no_cumplen)
 r4.metric("No evaluados", no_evaluados)
 
+no_evaluados_justificados = sum(
+    1 for registro in registros
+    if registro["estado_punto"] == "No evaluado"
+    and registro.get("no_evaluado_justificado", False)
+)
+no_evaluados_sin_justificar = no_evaluados - no_evaluados_justificados
+justificaciones_incompletas = [
+    registro for registro in registros
+    if registro.get("tipo_observacion") == "Punto no evaluado - justificado"
+    and len(str(registro.get("detalle_observacion") or "").strip()) < 10
+]
+
 if no_cumplen > 0:
     estado_sesion = "No conforme"
-elif no_evaluados > 0:
+elif no_evaluados_sin_justificar > 0 or justificaciones_incompletas:
     estado_sesion = "Incompleta"
+elif no_evaluados_justificados > 0:
+    estado_sesion = "Completa con puntos no evaluados"
 else:
     estado_sesion = "Conforme"
 
@@ -1280,8 +1314,19 @@ if estado_sesion == "Conforme":
     st.success("### 🟢 Estado de la sesión: CONFORME")
 elif estado_sesion == "No conforme":
     st.error("### 🔴 Estado de la sesión: NO CONFORME")
+elif estado_sesion == "Completa con puntos no evaluados":
+    st.warning("### 🟡 Estado de la sesión: COMPLETA CON PUNTOS NO EVALUADOS")
+    st.caption(
+        f"{no_evaluados_justificados} punto(s) quedaron sin medición, "
+        "pero con causa documentada. La sesión se considera realizada."
+    )
 else:
-    st.warning("### 🟡 Estado de la sesión: INCOMPLETA")
+    st.warning("### ⚪ Estado de la sesión: INCOMPLETA")
+    if justificaciones_incompletas:
+        st.error(
+            "El detalle de cada punto marcado como no evaluado justificado "
+            "debe tener al menos 10 caracteres."
+        )
 
 with st.container(border=True):
     st.markdown("### 🧠 Diagnóstico automático")
@@ -1309,10 +1354,22 @@ responsable_valido = bool(responsable_registro.strip())
 if not responsable_valido:
     st.warning("Debe ingresar el responsable antes de guardar la verificación.")
 
+sesion_guardable = estado_sesion != "Incompleta"
+
+if not sesion_guardable:
+    st.warning(
+        "La sesión no puede cerrarse mientras existan puntos sin evaluación "
+        "y sin una justificación válida."
+    )
+
 guardar = st.button(
     "💾 Guardar verificación en PROVICHECK",
     width="stretch",
-    disabled=not (confirmar and responsable_valido),
+    disabled=not (
+        confirmar
+        and responsable_valido
+        and sesion_guardable
+    ),
 )
 
 if guardar:
