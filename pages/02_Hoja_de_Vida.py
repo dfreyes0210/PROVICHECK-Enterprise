@@ -24,6 +24,7 @@ from utils.qr_equipos import (
 )
 from utils.data import cargar_hoja
 from utils.reportes_pdf import generar_informe_tendencia_pdf
+from utils.reportes_mantenimiento_pdf import generar_informe_mantenimientos_pdf
 from utils.documentos import (
     actualizar_estados_documentos,
     eliminar_documento,
@@ -2103,6 +2104,150 @@ with tabs[6]:
     )
 
     mantenimientos = listar_mantenimientos(codigo)
+
+    # -------------------------------------------------------------
+    # INFORME PDF HISTÓRICO DE MANTENIMIENTOS
+    # -------------------------------------------------------------
+    if not mantenimientos.empty:
+        with st.container(border=True):
+            st.markdown("### 📄 Informe histórico de mantenimiento")
+            st.caption(
+                "Seleccione el periodo que desea consolidar. El informe incluye "
+                "intervenciones, responsables, proveedores, repuestos, costos, "
+                "horas fuera de servicio y observaciones registradas."
+            )
+
+            fechas_mant = pd.to_datetime(
+                mantenimientos["fecha_inicio"],
+                errors="coerce",
+            ).dropna()
+
+            if fechas_mant.empty:
+                st.warning(
+                    "Los mantenimientos registrados no contienen fechas válidas "
+                    "para generar el informe."
+                )
+            else:
+                fecha_min_mant = fechas_mant.min().date()
+                fecha_max_mant = fechas_mant.max().date()
+
+                rp1, rp2 = st.columns(2)
+
+                with rp1:
+                    fecha_desde_mant = st.date_input(
+                        "Desde",
+                        value=fecha_min_mant,
+                        min_value=fecha_min_mant,
+                        max_value=fecha_max_mant,
+                        format="DD/MM/YYYY",
+                        key=f"pdf_mant_desde_{codigo}",
+                    )
+
+                with rp2:
+                    fecha_hasta_mant = st.date_input(
+                        "Hasta",
+                        value=fecha_max_mant,
+                        min_value=fecha_min_mant,
+                        max_value=fecha_max_mant,
+                        format="DD/MM/YYYY",
+                        key=f"pdf_mant_hasta_{codigo}",
+                    )
+
+                if fecha_desde_mant > fecha_hasta_mant:
+                    st.error(
+                        "La fecha inicial no puede ser posterior a la fecha final."
+                    )
+                else:
+                    mantenimientos_pdf = mantenimientos.copy()
+                    mantenimientos_pdf["_fecha_inicio_pdf"] = pd.to_datetime(
+                        mantenimientos_pdf["fecha_inicio"],
+                        errors="coerce",
+                    )
+                    inicio_mant = pd.Timestamp(fecha_desde_mant)
+                    fin_mant = (
+                        pd.Timestamp(fecha_hasta_mant)
+                        + pd.Timedelta(days=1)
+                        - pd.Timedelta(microseconds=1)
+                    )
+                    mantenimientos_pdf = mantenimientos_pdf[
+                        mantenimientos_pdf["_fecha_inicio_pdf"].between(
+                            inicio_mant,
+                            fin_mant,
+                            inclusive="both",
+                        )
+                    ].copy()
+
+                    if mantenimientos_pdf.empty:
+                        st.info(
+                            "No existen mantenimientos registrados para el "
+                            "periodo seleccionado. No se genera un PDF vacío."
+                        )
+                    else:
+                        costo_periodo = pd.to_numeric(
+                            mantenimientos_pdf.get("costo_total", 0),
+                            errors="coerce",
+                        ).fillna(0).sum()
+                        horas_periodo = pd.to_numeric(
+                            mantenimientos_pdf.get("horas_fuera_servicio", 0),
+                            errors="coerce",
+                        ).fillna(0).sum()
+
+                        ri1, ri2, ri3 = st.columns(3)
+                        ri1.metric(
+                            "Intervenciones del periodo",
+                            len(mantenimientos_pdf),
+                        )
+                        ri2.metric(
+                            "Costo del periodo",
+                            f"$ {costo_periodo:,.0f}",
+                        )
+                        ri3.metric(
+                            "Horas fuera de servicio",
+                            f"{horas_periodo:.2f}",
+                        )
+
+                        usuario_emision_mant = str(
+                            st.session_state.get(
+                                "nombre_usuario",
+                                st.session_state.get(
+                                    "usuario",
+                                    responsable,
+                                ),
+                            )
+                        )
+
+                        try:
+                            pdf_mantenimientos = generar_informe_mantenimientos_pdf(
+                                equipo=equipo,
+                                mantenimientos=mantenimientos_pdf,
+                                fecha_inicial=fecha_desde_mant,
+                                fecha_final=fecha_hasta_mant,
+                                usuario_emision=usuario_emision_mant,
+                                logo_path=buscar_logo_providencia(),
+                                version_sistema="1.0",
+                            )
+
+                            nombre_pdf_mant = (
+                                f"PROVICHECK_Mantenimientos_{codigo}_"
+                                f"{fecha_desde_mant.isoformat()}_"
+                                f"{fecha_hasta_mant.isoformat()}.pdf"
+                            )
+
+                            st.download_button(
+                                "📄 Generar y descargar informe PDF",
+                                data=pdf_mantenimientos,
+                                file_name=nombre_pdf_mant,
+                                mime="application/pdf",
+                                type="primary",
+                                width="stretch",
+                                key=f"pdf_mantenimientos_{codigo}",
+                            )
+
+                        except Exception as exc:
+                            st.error(
+                                "No fue posible generar el informe de "
+                                f"mantenimientos. Detalle: {exc}"
+                            )
 
     st.divider()
 
