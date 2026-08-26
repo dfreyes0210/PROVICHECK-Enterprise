@@ -42,6 +42,24 @@ def _obtener_detalle(id_detalle):
        .eq("id",int(id_detalle)).limit(1).execute())
     return (r.data or [None])[0]
 
+def _sesion_esta_anulada(sesion):
+    if not sesion:
+        return False
+    estado = _texto(sesion.get("estado_registro")).lower()
+    return sesion.get("anulada") is True or estado == "anulada"
+
+def _punto_esta_anulado(detalle):
+    if not detalle:
+        return False
+    estado = _texto(detalle.get("estado_registro")).lower()
+    return detalle.get("anulado") is True or estado == "anulado"
+
+def _confirmar_sesion_anulada(id_sesion):
+    return _sesion_esta_anulada(_obtener_sesion(id_sesion))
+
+def _confirmar_punto_anulado(id_detalle):
+    return _punto_esta_anulado(_obtener_detalle(id_detalle))
+
 def _auditoria(id_sesion,codigo_equipo,tipo,punto,motivo,usuario,anterior,observacion=""):
     obtener_cliente_supabase().table("anulaciones_verificacion").insert({
         "id_sesion":_texto(id_sesion),"codigo_equipo":_texto(codigo_equipo),
@@ -69,16 +87,23 @@ def anular_punto(id_detalle,motivo,observacion=""):
     try:
         d=_obtener_detalle(id_detalle)
         if not d: return False,"No se encontró el punto seleccionado."
-        if bool(d.get("anulado")): return False,"Este punto ya está anulado."
+        if _punto_esta_anulado(d): return False,"Este punto ya está anulado."
         ses=_obtener_sesion(d.get("id_sesion"))
         if not ses: return False,"No se encontró la sesión asociada."
-        if bool(ses.get("anulada")): return False,"La sesión completa ya está anulada."
+        if _sesion_esta_anulada(ses): return False,"La sesión completa ya está anulada."
         usuario=_usuario_actual(); ahora=datetime.now().astimezone().isoformat()
         anterior=_texto(d.get("estado_registro")) or "Válido"
         (obtener_cliente_supabase().table("detalle_verificacion").update({
             "estado_registro":"Anulado","anulado":True,"fecha_anulacion":ahora,
             "anulado_por":usuario,"motivo_anulacion":motivo
         }).eq("id",int(id_detalle)).execute())
+
+        if not _confirmar_punto_anulado(id_detalle):
+            return False,(
+                "Supabase no confirmó la anulación del punto. No se modificó "
+                "el registro. Revise la política UPDATE de detalle_verificacion."
+            )
+
         _auditoria(d.get("id_sesion"),d.get("codigo_equipo"),"Punto",
                    d.get("punto"),motivo,usuario,anterior,observacion)
         _bitacora(_texto(d.get("codigo_equipo")),"Punto de verificación anulado",
@@ -97,7 +122,7 @@ def anular_sesion(id_sesion,motivo,observacion=""):
     try:
         ses=_obtener_sesion(id_sesion)
         if not ses: return False,"No se encontró la sesión seleccionada."
-        if bool(ses.get("anulada")): return False,"Esta sesión ya está anulada."
+        if _sesion_esta_anulada(ses): return False,"Esta sesión ya está anulada."
         usuario=_usuario_actual(); ahora=datetime.now().astimezone().isoformat()
         codigo=_texto(ses.get("codigo_equipo"))
         anterior=_texto(ses.get("estado_registro")) or "Válida"
@@ -106,6 +131,13 @@ def anular_sesion(id_sesion,motivo,observacion=""):
             "estado_registro":"Anulada","anulada":True,"fecha_anulacion":ahora,
             "anulada_por":usuario,"motivo_anulacion":motivo
         }).eq("id_sesion",id_sesion).execute()
+
+        if not _confirmar_sesion_anulada(id_sesion):
+            return False,(
+                "Supabase no confirmó la anulación de la sesión. No se modificó "
+                "el registro. Revise la política UPDATE de sesiones_verificacion."
+            )
+
         cli.table("detalle_verificacion").update({
             "estado_registro":"Anulado","anulado":True,"fecha_anulacion":ahora,
             "anulado_por":usuario,"motivo_anulacion":motivo
