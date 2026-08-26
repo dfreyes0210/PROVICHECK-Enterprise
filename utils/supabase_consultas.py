@@ -3,8 +3,8 @@ import pandas as pd
 from database import get_connection
 from utils.supabase_client import obtener_cliente_supabase
 
-SESION_COLS = ["id","id_sesion","codigo_equipo","nombre_equipo","laboratorio","fecha","hora","responsable","usuario_login","estado","total_puntos","puntos_cumplen","puntos_no_cumplen","puntos_no_evaluados","fecha_registro"]
-DETALLE_COLS = ["id","id_sesion","codigo_equipo","punto","nombre_chequeo","codigo_patron","estado_patron","fecha_vencimiento_patron","valor_nominal","resultado","error","limite_inferior","limite_superior","estado_punto","observacion","fecha_registro"]
+SESION_COLS = ["id","id_sesion","codigo_equipo","nombre_equipo","laboratorio","fecha","hora","responsable","usuario_login","estado","total_puntos","puntos_cumplen","puntos_no_cumplen","puntos_no_evaluados","fecha_registro","estado_registro","anulada","fecha_anulacion","anulada_por","motivo_anulacion"]
+DETALLE_COLS = ["id","id_sesion","codigo_equipo","punto","nombre_chequeo","codigo_patron","estado_patron","fecha_vencimiento_patron","valor_nominal","resultado","error","limite_inferior","limite_superior","estado_punto","observacion","fecha_registro","estado_registro","anulado","fecha_anulacion","anulado_por","motivo_anulacion"]
 
 def _df(data, cols):
     if not data:
