@@ -276,7 +276,40 @@ def filtrar_puntos_validos(df):
             .str.strip()
             .str.lower()
         )
-        salida = salida.loc[~estado.eq("anulado")].copy()
+        salida = salida.loc[
+            ~estado.isin({"anulado", "anulada", "eliminado", "eliminada"})
+        ].copy()
+
+    # Un punto no evaluado puede quedar almacenado con resultado 0 como valor
+    # predeterminado. Ese cero no es una medicion y no debe entrar en
+    # Tendencias, estadisticas ni informes. Los ceros realmente evaluados se
+    # conservan porque pueden ser resultados validos para otros equipos.
+    if "estado_punto" in salida.columns:
+        estado_punto = (
+            salida["estado_punto"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        estados_sin_resultado = {
+            "no evaluado",
+            "no evaluada",
+            "sin evaluar",
+            "pendiente",
+        }
+        salida = salida.loc[
+            ~estado_punto.isin(estados_sin_resultado)
+        ].copy()
+
+    # Los resultados vacios tampoco representan una medicion. Esta validacion
+    # se aplica solo cuando la consulta incluye la columna resultado.
+    if "resultado" in salida.columns:
+        resultado_numerico = pd.to_numeric(
+            salida["resultado"],
+            errors="coerce",
+        )
+        salida = salida.loc[resultado_numerico.notna()].copy()
 
     return salida.reset_index(drop=True)
 
