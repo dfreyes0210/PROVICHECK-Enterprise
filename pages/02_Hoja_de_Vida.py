@@ -226,6 +226,37 @@ def filtrar_sesiones_validas(df):
     return salida.reset_index(drop=True)
 
 
+def obtener_ids_sesiones_anuladas(df):
+    """Devuelve IDs anulados para impedir que entren a Tendencias."""
+    if df is None or df.empty or "id_sesion" not in df.columns:
+        return set()
+
+    mascara = pd.Series(False, index=df.index)
+
+    if "anulada" in df.columns:
+        mascara = mascara | df["anulada"].apply(es_verdadero)
+
+    if "estado_registro" in df.columns:
+        estado = (
+            df["estado_registro"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .str.lower()
+        )
+        mascara = mascara | estado.isin(
+            {"anulada", "anulado", "eliminada", "eliminado"}
+        )
+
+    return set(
+        df.loc[mascara, "id_sesion"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .tolist()
+    )
+
+
 def filtrar_puntos_validos(df):
     if df is None or df.empty:
         return pd.DataFrame() if df is None else df.copy()
@@ -566,6 +597,7 @@ frecuencia = texto_seguro(
 )
 
 historial = consultar_historial_equipo(codigo, limite=5000)
+ids_sesiones_anuladas = obtener_ids_sesiones_anuladas(historial)
 historial_validas = filtrar_sesiones_validas(historial)
 
 if historial_validas.empty:
@@ -1142,6 +1174,10 @@ with tabs[4]:
 
         for _, fila_sesion in historial_validas.iterrows():
             id_sesion_actual = fila_sesion.get("id_sesion")
+
+            if str(id_sesion_actual).strip() in ids_sesiones_anuladas:
+                continue
+
             df_detalle = consultar_detalle_sesion(id_sesion_actual)
 
             if df_detalle.empty:
@@ -1166,6 +1202,21 @@ with tabs[4]:
             st.info("No hay detalle suficiente para construir tendencias.")
         else:
             df_tendencia = pd.concat(detalles, ignore_index=True)
+
+            # Defensa adicional: aunque una consulta devolviera una sesión
+            # anulada, nunca debe participar en tendencias ni estadísticas.
+            if "id_sesion" in df_tendencia.columns:
+                ids_normalizados = (
+                    df_tendencia["id_sesion"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_tendencia = df_tendencia.loc[
+                    ~ids_normalizados.isin(ids_sesiones_anuladas)
+                ].copy()
+
+            df_tendencia = filtrar_puntos_validos(df_tendencia)
 
             columnas_numericas = [
                 "valor_nominal",
@@ -1433,6 +1484,7 @@ with tabs[4]:
 
                         st.markdown("### Tabla de resultados")
                         columnas_tabla = [
+                            "id_sesion",
                             "fecha",
                             "hora",
                             "resultado",
@@ -1441,6 +1493,8 @@ with tabs[4]:
                             "limite_superior",
                             "lote_patron",
                             "estado_punto",
+                            "estado_registro",
+                            "anulado",
                             "responsable",
                             "observacion",
                         ]
