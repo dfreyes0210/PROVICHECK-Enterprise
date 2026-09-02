@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+import json
+from uuid import uuid4
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -49,6 +52,190 @@ TIPOS_EJECUTOR = [
     "Personal interno",
     "Proveedor externo",
 ]
+
+
+# EDITAR_MANTENIMIENTO_ADMIN_V1 — se reutilizan columnas existentes.
+# Identidad, fechas originales, estado activo y usuario de creación no se editan.
+CAMPOS_EDICION_MANTENIMIENTO = {
+    "tipo_mantenimiento", "estado_mantenimiento", "realizado_por_tipo",
+    "responsable", "proveedor", "numero_orden", "descripcion", "causa",
+    "accion_realizada", "resultado", "componente", "marca_componente",
+    "modelo_componente", "serie_componente", "cantidad", "costo_repuesto",
+    "costo_mano_obra", "costo_otros", "documento_id", "observaciones",
+}
+CAMPOS_COSTOS_EDICION = {"costo_repuesto", "costo_mano_obra", "costo_otros"}
+
+
+def puede_editar_mantenimientos() -> bool:
+    from utils.permisos import obtener_rol_usuario
+
+    # No aceptar Líder ni un rol recibido desde un formulario.
+    return obtener_rol_usuario() == "Administrador"
+
+
+def _usuario_editor() -> str:
+    import streamlit as st
+
+    if not puede_editar_mantenimientos():
+        raise PermissionError("Solo el Administrador puede editar mantenimientos.")
+    for clave in ("usuario_login", "usuario", "nombre_usuario", "usuario_nombre"):
+        valor = st.session_state.get(clave)
+        if isinstance(valor, str) and _texto_seguro(valor):
+            return _texto_seguro(valor)
+    raise PermissionError("No se identificó al usuario. Inicie sesión nuevamente.")
+
+
+def obtener_mantenimiento_para_edicion(mantenimiento_id, codigo_equipo):
+    """Lectura fresca, autorizada y limitada al equipo seleccionado."""
+    _usuario_editor()
+    respuesta = (
+        obtener_cliente_supabase().table("mantenimientos").select("*")
+        .eq("id", int(mantenimiento_id))
+        .eq("codigo_equipo", _normalizar_codigo(codigo_equipo))
+        .eq("activo", True).limit(1).execute()
+    )
+    if not respuesta.data:
+        raise ValueError("El mantenimiento no existe, está inactivo o no es accesible.")
+    return dict(respuesta.data[0])
+
+
+def _valor_edicion(campo, valor):
+    if campo in CAMPOS_COSTOS_EDICION or campo == "costo_total":
+        try:
+            numero = Decimal(str(0 if valor in (None, "") else valor))
+            if not numero.is_finite() or numero < 0:
+                raise ValueError("El costo debe ser finito y no negativo.")
+            return float(numero.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise ValueError(f"Costo inválido en {campo}.") from exc
+    if campo in {"cantidad", "documento_id"}:
+        if valor in (None, ""):
+            return None if campo == "documento_id" else 1
+        try:
+            numero = Decimal(str(valor))
+            if not numero.is_finite() or numero != int(numero) or numero < 1:
+                raise ValueError()
+            return int(numero)
+        except (InvalidOperation, ValueError, TypeError, OverflowError) as exc:
+            raise ValueError(f"{campo} debe ser un entero positivo.") from exc
+    return _texto_seguro(valor)
+
+
+def actualizar_mantenimiento(mantenimiento_id, codigo_equipo, cambios, original, motivo):
+    """Actualiza el mismo registro con permiso, trazabilidad y confirmación.
+
+    'original' debe proceder de obtener_mantenimiento_para_edicion y guardarse
+    en la sesión del servidor al abrir el editor; nunca se toma del navegador.
+    No se requieren columnas nuevas. La bitácora registra primero la intención
+    y luego su resultado: son operaciones separadas, no una transacción SQL.
+    """
+    usuario = _usuario_editor()  # Comprobación también en la capa de guardado.
+    motivo = _texto_seguro(motivo)
+    if len(motivo) < 10:
+        raise ValueError("Indique un motivo de modificación de al menos 10 caracteres.")
+    desconocidos = set(cambios) - CAMPOS_EDICION_MANTENIMIENTO
+    if desconocidos:
+        raise ValueError("Hay campos no permitidos para edición.")
+    actual = obtener_mantenimiento_para_edicion(mantenimiento_id, codigo_equipo)
+    if (str(original.get("id")) != str(actual["id"])
+            or _normalizar_codigo(original.get("codigo_equipo")) != _normalizar_codigo(codigo_equipo)):
+        raise ValueError("La copia original no corresponde al mantenimiento seleccionado.")
+    for campo in CAMPOS_EDICION_MANTENIMIENTO | {"costo_total"}:
+        if _valor_edicion(campo, actual.get(campo)) != _valor_edicion(campo, original.get(campo)):
+            raise ValueError("El registro cambió desde que abrió el editor. Cancele y vuelva a abrirlo.")
+
+    nuevos = dict(actual)
+    nuevos.update({campo: _valor_edicion(campo, valor) for campo, valor in cambios.items()})
+    for campo, opciones in (
+        ("tipo_mantenimiento", TIPOS_MANTENIMIENTO),
+        ("estado_mantenimiento", ESTADOS_MANTENIMIENTO),
+        ("realizado_por_tipo", TIPOS_EJECUTOR),
+        ("resultado", RESULTADOS_MANTENIMIENTO),
+    ):
+        if nuevos.get(campo) not in opciones:
+            raise ValueError(f"Valor no válido en {campo}.")
+    if not _texto_seguro(nuevos.get("descripcion")):
+        raise ValueError("La descripción del mantenimiento es obligatoria.")
+    if nuevos.get("realizado_por_tipo") == "Proveedor externo" and not _texto_seguro(nuevos.get("proveedor")):
+        raise ValueError("Debe indicar el proveedor externo.")
+
+    payload = {campo: nuevos[campo] for campo in cambios
+               if _valor_edicion(campo, actual.get(campo)) != nuevos[campo]}
+    if not payload:
+        return {"actualizado": False, "aviso": "No hay cambios para guardar."}
+    if set(payload) & CAMPOS_COSTOS_EDICION:
+        payload["costo_total"] = float(sum(
+            Decimal(str(_valor_edicion(campo, nuevos.get(campo))))
+            for campo in CAMPOS_COSTOS_EDICION
+        ))
+
+    if "documento_id" in payload and payload["documento_id"] is not None:
+        # No permitir asociar un soporte de otro equipo.
+        conn = get_connection()
+        try:
+            documento = conn.execute(
+                "SELECT codigo_equipo FROM documentos_equipo WHERE id = ?",
+                (payload["documento_id"],),
+            ).fetchone()
+        finally:
+            conn.close()
+        if not documento or _normalizar_codigo(documento[0]) != _normalizar_codigo(codigo_equipo):
+            raise ValueError("El documento no existe o pertenece a otro equipo.")
+
+    operacion = uuid4().hex
+    nombre, laboratorio = _obtener_identidad_equipo(codigo_equipo)
+    detalle = json.dumps({
+        "operacion": operacion, "motivo": motivo,
+        "cambios": {k: {"anterior": actual.get(k), "nuevo": v} for k, v in payload.items()},
+    }, ensure_ascii=False, default=str)
+
+    def bitacora(evento, descripcion, estado):
+        ahora = _ahora_colombia()
+        return registrar_evento_bitacora(
+            fecha=ahora.date(), hora=ahora.time().replace(microsecond=0),
+            codigo_equipo=_normalizar_codigo(codigo_equipo), nombre_equipo=nombre,
+            laboratorio=laboratorio, categoria="Mantenimiento", evento=evento,
+            descripcion=descripcion, usuario=usuario, estado=estado,
+            origen="Manual", id_referencia=f"MANT-{int(mantenimiento_id)}",
+        )
+
+    ok, _ = bitacora("Solicitud de edición de mantenimiento", detalle, "Acción administrativa")
+    if not ok:
+        raise RuntimeError("No se pudo registrar la trazabilidad. No se modificó el mantenimiento.")
+
+    try:
+        consulta = (obtener_cliente_supabase().table("mantenimientos").update(payload)
+                    .eq("id", int(mantenimiento_id))
+                    .eq("codigo_equipo", _normalizar_codigo(codigo_equipo)).eq("activo", True))
+        # Compare-and-set: no sobrescribir modificaciones concurrentes de los
+        # campos enviados. Se usan los valores originales, incluidos los NULL.
+        campos_guardia = set(payload)
+        if campos_guardia & CAMPOS_COSTOS_EDICION:
+            campos_guardia |= CAMPOS_COSTOS_EDICION
+        for campo in campos_guardia:
+            valor = actual.get(campo)
+            consulta = consulta.is_(campo, "null") if valor is None else consulta.eq(campo, valor)
+        respuesta = consulta.execute()
+        if not respuesta.data or len(respuesta.data) != 1:
+            raise RuntimeError("Supabase no confirmó una fila actualizada. Revise permisos o cambios concurrentes.")
+        confirmado = obtener_mantenimiento_para_edicion(mantenimiento_id, codigo_equipo)
+        if any(_valor_edicion(k, confirmado.get(k)) != v for k, v in payload.items()):
+            raise RuntimeError("La lectura posterior no coincide con los cambios enviados.")
+    except Exception as exc:
+        try:
+            bitacora("Edición de mantenimiento no confirmada", f"Operación {operacion}. Revisar el registro antes de reintentar.", "Advertencia")
+        except Exception:
+            pass  # La solicitud con todos los cambios ya quedó registrada.
+        raise RuntimeError("No se confirmó la edición. Recargue el historial antes de reintentar. " + str(exc)) from exc
+
+    aviso = ""
+    try:
+        ok, _ = bitacora("Mantenimiento editado", detalle, "Acción administrativa")
+        if not ok:
+            aviso = "Los cambios están guardados; la solicitud quedó en bitácora, pero falló el evento de confirmación."
+    except Exception:
+        aviso = "Los cambios están guardados; la solicitud quedó en bitácora, pero falló el evento de confirmación."
+    return {"actualizado": True, "aviso": aviso}
 
 
 def _ahora_colombia() -> datetime:

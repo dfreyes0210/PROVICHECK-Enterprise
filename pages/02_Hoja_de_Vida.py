@@ -41,6 +41,9 @@ from utils.calibraciones import (
     resumen_calibraciones,
 )
 from utils.mantenimientos import (
+    actualizar_mantenimiento,
+    obtener_mantenimiento_para_edicion,
+    puede_editar_mantenimientos,
     ESTADOS_MANTENIMIENTO,
     RESULTADOS_MANTENIMIENTO,
     TIPOS_EJECUTOR,
@@ -148,6 +151,92 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+
+
+def mostrar_editor_mantenimiento(mant, codigo_equipo, opciones_documentos):
+    """Editor administrativo de un registro existente, sin cambiar sus fechas."""
+    prefijo = f"editar_mant_{codigo_equipo}_{int(mant['id'])}"
+    clave = prefijo + "_original"
+    if not puede_editar_mantenimientos():
+        st.session_state.pop(clave, None)
+        return
+    if st.button("✏️ Editar mantenimiento", key=prefijo + "_abrir"):
+        try:
+            st.session_state[clave] = obtener_mantenimiento_para_edicion(mant["id"], codigo_equipo)
+            # Una identidad nueva impide reutilizar valores de un editor anterior.
+            st.session_state[prefijo + "_version"] = datetime.now().isoformat()
+        except Exception as exc:
+            st.error(f"No se pudo abrir el editor: {exc}")
+            return
+    if clave not in st.session_state:
+        return
+    original = st.session_state[clave]
+    widget = prefijo + st.session_state[prefijo + "_version"]
+    st.info(
+        "Edición administrativa: conserva el mismo registro y sus fechas originales. "
+        "Cada cambio requiere un motivo y queda registrado en la bitácora. "
+        "Puede indicar el número de factura en Observaciones y asociar un documento "
+        "previamente cargado en la pestaña Documentos."
+    )
+    st.caption(f"MANT-{original['id']} · Inicio: {original.get('fecha_inicio')} · Fin: {original.get('fecha_fin') or 'Sin fecha'}")
+    if st.button("Cancelar edición", key=widget + "_cancelar"):
+        st.session_state.pop(clave, None)
+        st.rerun()
+
+    def texto(campo):
+        valor = original.get(campo)
+        return "" if valor is None else str(valor)
+
+    def selector(campo, etiqueta, opciones):
+        actual = texto(campo)
+        valores = list(opciones)
+        if actual not in valores:
+            valores.insert(0, actual)
+        return st.selectbox(etiqueta, valores, index=valores.index(actual), key=widget + campo)
+
+    with st.form(widget + "_form"):
+        cambios = {}
+        izquierda, derecha = st.columns(2)
+        with izquierda:
+            cambios["tipo_mantenimiento"] = selector("tipo_mantenimiento", "Tipo", TIPOS_MANTENIMIENTO)
+            cambios["estado_mantenimiento"] = selector("estado_mantenimiento", "Estado", ESTADOS_MANTENIMIENTO)
+            cambios["realizado_por_tipo"] = selector("realizado_por_tipo", "Ejecutor", TIPOS_EJECUTOR)
+            cambios["resultado"] = selector("resultado", "Resultado", RESULTADOS_MANTENIMIENTO)
+            for campo, etiqueta in (("responsable", "Responsable"), ("proveedor", "Proveedor"), ("numero_orden", "Número de orden")):
+                cambios[campo] = st.text_input(etiqueta, value=texto(campo), key=widget + campo)
+        with derecha:
+            for campo, etiqueta in (("costo_repuesto", "Costo de repuestos"), ("costo_mano_obra", "Costo de mano de obra"), ("costo_otros", "Otros costos")):
+                cambios[campo] = st.number_input(etiqueta, min_value=0.0, value=float(original.get(campo) or 0), step=1000.0, format="%.2f", key=widget + campo)
+            st.caption("El costo total se recalcula al guardar. Valores en la moneda utilizada por PROVICHECK.")
+            for campo, etiqueta in (("componente", "Componente"), ("marca_componente", "Marca"), ("modelo_componente", "Modelo"), ("serie_componente", "Serie")):
+                cambios[campo] = st.text_input(etiqueta, value=texto(campo), key=widget + campo)
+            cambios["cantidad"] = st.number_input("Cantidad", min_value=1, value=int(original.get("cantidad") or 1), step=1, key=widget + "cantidad")
+        for campo, etiqueta in (("descripcion", "Descripción *"), ("causa", "Causa"), ("accion_realizada", "Acción realizada"), ("observaciones", "Observaciones / referencia de factura")):
+            cambios[campo] = st.text_area(etiqueta, value=texto(campo), key=widget + campo)
+        documentos = dict(opciones_documentos)
+        documento_actual = original.get("documento_id")
+        if documento_actual is not None:
+            documento_actual = int(documento_actual)
+            if documento_actual not in documentos.values():
+                documentos[f"Conservar documento actual (ID {documento_actual})"] = documento_actual
+        etiquetas = list(documentos)
+        seleccion_actual = next(k for k, v in documentos.items() if v == documento_actual)
+        seleccion = st.selectbox("Documento asociado", etiquetas, index=etiquetas.index(seleccion_actual), key=widget + "documento")
+        cambios["documento_id"] = documentos[seleccion]
+        motivo = st.text_area("Motivo de modificación * (mínimo 10 caracteres)", key=widget + "motivo")
+        guardar = st.form_submit_button("Guardar cambios del mantenimiento")
+    if guardar:
+        try:
+            resultado = actualizar_mantenimiento(original["id"], codigo_equipo, cambios, original, motivo)
+        except Exception as exc:
+            st.error(str(exc))
+            return
+        if not resultado["actualizado"]:
+            st.info(resultado["aviso"])
+            return
+        st.session_state.pop(clave, None)
+        st.session_state[f"mantenimiento_editado_{codigo_equipo}"] = resultado["aviso"] or "Mantenimiento actualizado y confirmado en la bitácora."
+        st.rerun()
 
 
 def estado_visual(estado):
@@ -2613,6 +2702,10 @@ with tabs[6]:
 
     st.markdown("### 📋 Historial de mantenimientos")
 
+    aviso_edicion = st.session_state.pop(f"mantenimiento_editado_{codigo}", None)
+    if aviso_edicion:
+        st.info(aviso_edicion)
+
     mantenimientos = listar_mantenimientos(codigo)
 
     if mantenimientos.empty:
@@ -2659,6 +2752,17 @@ with tabs[6]:
                     == filtro_estado_mant
                 ]
             )
+
+        busqueda_mant = st.text_input(
+            "Buscar por fecha (AAAA-MM-DD), orden, proveedor o descripción",
+            key=f"buscar_mantenimiento_{codigo}",
+        ).strip()
+        if busqueda_mant:
+            columnas_busqueda = [c for c in ("id", "fecha_inicio", "numero_orden", "proveedor", "descripcion", "observaciones") if c in mantenimientos_filtrados.columns]
+            coincidencias = mantenimientos_filtrados[columnas_busqueda].fillna("").astype(str).apply(
+                lambda columna: columna.str.contains(busqueda_mant, case=False, regex=False)
+            ).any(axis=1)
+            mantenimientos_filtrados = mantenimientos_filtrados[coincidencias]
 
         st.caption(
             f"Mostrando {len(mantenimientos_filtrados)} "
@@ -2770,6 +2874,8 @@ with tabs[6]:
                     if mant.get("observaciones"):
                         st.markdown("**Observaciones**")
                         st.write(mant.get("observaciones"))
+
+                mostrar_editor_mantenimiento(mant, codigo, opciones_doc_mant)
 
                 mb1, mb2, mb3 = st.columns([1.2, 1.2, 3])
 
