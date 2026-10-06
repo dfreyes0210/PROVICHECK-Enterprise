@@ -648,278 +648,185 @@ def obtener_cumplimiento_laboratorios():
 
 
 def obtener_patrones_alerta(dias_alerta=30, limite=20):
-    """
-    Obtiene los patrones vencidos o próximos a vencer.
-
-    La fecha oficial de vencimiento se toma prioritariamente de la columna
-    'fecha_vencimiento' de la hoja Equipos_Patrones.
-
-    Esta función alimenta las alertas y la sección de Acciones inmediatas
-    del Dashboard.
-    """
-
     patrones = cargar_hoja("Equipos_Patrones")
     puntos = cargar_hoja("Puntos_Verificacion")
     equipos = _equipos()
-
-    cols_out = [
-        "codigo_patron",
-        "descripcion_patron",
-        "codigo_equipo",
-        "nombre_equipo",
-        "laboratorio",
-        "punto_verificacion",
-        "fecha_vencimiento",
-        "dias_restantes",
-        "estado_patron",
-    ]
-
-    # ---------------------------------------------------------
-    # VALIDAR EXISTENCIA DE PATRONES
-    # ---------------------------------------------------------
-    if patrones.empty:
-        return pd.DataFrame(columns=cols_out)
-
-    patrones = patrones.copy()
-    patrones.columns = [str(c).strip() for c in patrones.columns]
-
-    # ---------------------------------------------------------
-    # IDENTIFICAR COLUMNAS
-    # ---------------------------------------------------------
-    cp = _buscar_columna(
-        patrones,
-        ["codigo_patron"]
-    )
-
-    # IMPORTANTE:
-    # fecha_vencimiento es la fuente oficial y tiene prioridad.
-    cv = _buscar_columna(
-        patrones,
-        [
-            "fecha_vencimiento",
-            "fecha_vencimiento_calibracion",
-            "vencimiento",
-        ],
-    )
-
-    cd = _buscar_columna(
-        patrones,
-        [
-            "descripcion",
-            "nombre_patron",
-        ],
-    )
-
-    if cp is None or cv is None:
-        return pd.DataFrame(columns=cols_out)
-
-    # ---------------------------------------------------------
-    # CONSTRUIR BASE DE PATRONES
-    # ---------------------------------------------------------
-    base = pd.DataFrame(
-        {
-            "codigo_patron": patrones[cp].apply(_codigo),
-
-            "descripcion_patron": (
-                patrones[cd]
-                .fillna("Patrón sin descripción")
-                .astype(str)
-                if cd is not None
-                else "Patrón sin descripción"
-            ),
-
-            "fecha_vencimiento": pd.to_datetime(
-                patrones[cv],
-                errors="coerce",
-                dayfirst=True,
-            ),
-        }
-    )
-
-    # ---------------------------------------------------------
-    # CALCULAR VENCIMIENTO
-    # ---------------------------------------------------------
-    hoy = pd.Timestamp(_ahora().date()).normalize()
-
-    base["dias_restantes"] = (
-        base["fecha_vencimiento"]
-        .dt.normalize()
-        .sub(hoy)
-        .dt.days
-    )
-
-    def clasificar_patron(dias):
-        if pd.isna(dias):
-            return "⚪ Sin fecha"
-
-        if dias < 0:
-            return "🔴 Vencido"
-
-        if dias <= dias_alerta:
-            return "🟡 Próximo a vencer"
-
-        return "🟢 Vigente"
-
+    cols_out = ["codigo_patron","descripcion_patron","codigo_equipo","nombre_equipo","laboratorio","punto_verificacion","fecha_vencimiento","dias_restantes","estado_patron"]
+    if patrones.empty: return pd.DataFrame(columns=cols_out)
+    patrones = patrones.copy(); patrones.columns = [str(c).strip() for c in patrones.columns]
+    cp = _buscar_columna(patrones, ["codigo_patron"])
+    cv = _buscar_columna(patrones, ["fecha_vencimiento_calibracion","fecha_vencimiento","vencimiento"])
+    cd = _buscar_columna(patrones, ["descripcion","nombre_patron"])
+    if cp is None or cv is None: return pd.DataFrame(columns=cols_out)
+    base = pd.DataFrame({
+        "codigo_patron": patrones[cp].apply(_codigo),
+        "descripcion_patron": patrones[cd].fillna("Patrón sin descripción").astype(str) if cd else "Patrón sin descripción",
+        "fecha_vencimiento": pd.to_datetime(patrones[cv], errors="coerce", dayfirst=True),
+    })
+    hoy = pd.Timestamp(_ahora().date())
+    base["dias_restantes"] = base["fecha_vencimiento"].dt.normalize().sub(hoy).dt.days
     base["estado_patron"] = base["dias_restantes"].apply(
-        clasificar_patron
-    )
-
-    # ---------------------------------------------------------
-    # SOLO PATRONES QUE REQUIEREN ATENCIÓN
-    # ---------------------------------------------------------
-    base = base[
-        base["estado_patron"].isin(
-            [
-                "🔴 Vencido",
-                "🟡 Próximo a vencer",
-            ]
-        )
-    ].copy()
-
-    if base.empty:
-        return pd.DataFrame(columns=cols_out)
-
-    # ---------------------------------------------------------
-    # RELACIONAR PATRÓN CON PUNTOS DE VERIFICACIÓN
-    # ---------------------------------------------------------
+        lambda d: "🔴 Vencido" if pd.notna(d) and d < 0 else ("🟡 Próximo a vencer" if pd.notna(d) and d <= dias_alerta else "🟢 Vigente"))
+    base = base[base["estado_patron"].isin(["🔴 Vencido","🟡 Próximo a vencer"])]
+    if base.empty: return pd.DataFrame(columns=cols_out)
     if not puntos.empty:
-
-        puntos = puntos.copy()
-        puntos.columns = [
-            str(c).strip()
-            for c in puntos.columns
-        ]
-
+        puntos = puntos.copy(); puntos.columns = [str(c).strip() for c in puntos.columns]
         if "codigo_patron" in puntos.columns:
-
-            puntos["codigo_patron"] = (
-                puntos["codigo_patron"].apply(_codigo)
-            )
-
-            cols = [
-                c
-                for c in [
-                    "codigo_patron",
-                    "codigo_equipo",
-                    "punto_verificacion",
-                ]
-                if c in puntos.columns
-            ]
-
-            base = base.merge(
-                puntos[cols].drop_duplicates(),
-                on="codigo_patron",
-                how="left",
-            )
-
-    # ---------------------------------------------------------
-    # GARANTIZAR CÓDIGO DE EQUIPO
-    # ---------------------------------------------------------
-    if "codigo_equipo" not in base.columns:
-        base["codigo_equipo"] = ""
-
-    base["codigo_equipo"] = (
-        base["codigo_equipo"].apply(_codigo)
-    )
-
-    # ---------------------------------------------------------
-    # RELACIONAR INFORMACIÓN DEL EQUIPO
-    # ---------------------------------------------------------
-    if (
-        not equipos.empty
-        and "codigo_equipo" in equipos.columns
-    ):
-
-        cols = [
-            c
-            for c in [
-                "codigo_equipo",
-                "nombre_equipo",
-                "laboratorio",
-            ]
-            if c in equipos.columns
-        ]
-
-        base = base.merge(
-            equipos[cols],
-            on="codigo_equipo",
-            how="left",
-        )
-
-    # ---------------------------------------------------------
-    # GARANTIZAR TODAS LAS COLUMNAS DE SALIDA
-    # ---------------------------------------------------------
-    for columna in cols_out:
-        if columna not in base.columns:
-            base[columna] = ""
-
-    # ---------------------------------------------------------
-    # ORDENAR ALERTAS
-    # Primero vencidos y luego próximos a vencer
-    # ---------------------------------------------------------
-    orden_estado = {
-        "🔴 Vencido": 1,
-        "🟡 Próximo a vencer": 2,
-    }
-
-    base["_orden_estado"] = (
-        base["estado_patron"]
-        .map(orden_estado)
-        .fillna(9)
-    )
-
-    base = base.sort_values(
-        [
-            "_orden_estado",
-            "dias_restantes",
-        ],
-        ascending=[
-            True,
-            True,
-        ],
-        na_position="last",
-    )
-
-    base = base.drop(
-        columns=["_orden_estado"]
-    )
-
-    return (
-        base
-        .head(limite)[cols_out]
-        .reset_index(drop=True)
-    )
+            puntos["codigo_patron"] = puntos["codigo_patron"].apply(_codigo)
+            cols = [c for c in ["codigo_patron","codigo_equipo","punto_verificacion"] if c in puntos.columns]
+            base = base.merge(puntos[cols].drop_duplicates(), on="codigo_patron", how="left")
+    if "codigo_equipo" not in base.columns: base["codigo_equipo"] = ""
+    base["codigo_equipo"] = base["codigo_equipo"].apply(_codigo)
+    if not equipos.empty and "codigo_equipo" in equipos.columns:
+        cols = [c for c in ["codigo_equipo","nombre_equipo","laboratorio"] if c in equipos.columns]
+        base = base.merge(equipos[cols], on="codigo_equipo", how="left")
+    for c in cols_out:
+        if c not in base.columns: base[c] = ""
+    return base.sort_values(["estado_patron","dias_restantes"]).head(limite)[cols_out].reset_index(drop=True)
 
 
 def obtener_verificaciones_atencion(limite=20):
+    """Devuelve solo verificaciones que realmente requieren atención.
+
+    Reglas PROVICHECK:
+    - "No cumple" siempre requiere atención.
+    - "No evaluado" requiere atención solo si NO está justificado.
+    - Un punto con no_evaluado_justificado=True o tipo de observación
+      "Punto no evaluado - justificado" no aparece en Acciones inmediatas.
+    """
     sesiones = consultar_sesiones_verificacion(100000)
-    cols = ["fecha","hora","id_sesion","codigo_equipo","nombre_equipo","laboratorio","responsable","estado_sesion","punto","resultado","limite_inferior","limite_superior","estado_punto","observacion"]
-    if sesiones.empty or "estado" not in sesiones.columns: return pd.DataFrame(columns=cols)
-    e = sesiones["estado"].astype(str).str.strip().str.lower()
-    sesiones = sesiones[e.isin(["no conforme","incompleta"])]
+    cols = [
+        "fecha", "hora", "id_sesion", "codigo_equipo", "nombre_equipo",
+        "laboratorio", "responsable", "estado_sesion", "punto", "resultado",
+        "limite_inferior", "limite_superior", "estado_punto", "observacion",
+    ]
+
+    if sesiones.empty or "estado" not in sesiones.columns:
+        return pd.DataFrame(columns=cols)
+
+    sesiones = sesiones.copy()
+    sesiones["_estado_norm"] = (
+        sesiones["estado"].fillna("").astype(str).str.strip().str.lower()
+    )
+
+    # Solo sesiones que pueden contener una situación que requiera atención.
+    # Incluimos el estado nuevo para revisar sus puntos, pero los justificados
+    # se excluyen más abajo.
+    sesiones = sesiones[
+        sesiones["_estado_norm"].isin([
+            "no conforme",
+            "incompleta",
+            "completa con puntos no evaluados",
+        ])
+    ]
+
     filas = []
+
     for _, s in sesiones.iterrows():
         d = consultar_detalle_sesion(s.get("id_sesion"))
         if d.empty:
-            d = pd.DataFrame([{}])
-        elif "estado_punto" in d.columns:
-            ed = d["estado_punto"].astype(str).str.strip().str.lower()
-            filtrado = d[ed.isin(["no cumple","no evaluado"])]
-            if not filtrado.empty: d = filtrado
+            continue
+
+        d = d.copy()
+
+        if "estado_punto" not in d.columns:
+            continue
+
+        estado_punto = (
+            d["estado_punto"].fillna("").astype(str).str.strip().str.lower()
+        )
+
+        # Bandera explícita guardada por el módulo de Verificaciones.
+        if "no_evaluado_justificado" in d.columns:
+            justificado_flag = d["no_evaluado_justificado"].fillna(False).apply(
+                lambda v: (
+                    v is True
+                    or str(v).strip().lower() in {"true", "1", "si", "sí", "yes"}
+                )
+            )
+        else:
+            justificado_flag = pd.Series(False, index=d.index)
+
+        # Tipo de observación explícito guardado por Verificaciones.
+        if "tipo_observacion" in d.columns:
+            tipo_obs = (
+                d["tipo_observacion"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+            justificado_tipo = tipo_obs.eq("punto no evaluado - justificado")
+        else:
+            justificado_tipo = pd.Series(False, index=d.index)
+
+        # Compatibilidad con registros históricos: algunas versiones anteriores
+        # podían dejar la justificación únicamente en observacion/detalle.
+        if "observacion" in d.columns:
+            observacion = d["observacion"].fillna("").astype(str).str.strip().str.lower()
+        else:
+            observacion = pd.Series("", index=d.index)
+
+        if "detalle_observacion" in d.columns:
+            detalle_obs = (
+                d["detalle_observacion"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.lower()
+            )
+        else:
+            detalle_obs = pd.Series("", index=d.index)
+
+        justificado_texto = (
+            observacion.str.contains("punto no evaluado - justificado", na=False)
+            | detalle_obs.str.contains("punto no evaluado - justificado", na=False)
+        )
+
+        esta_justificado = justificado_flag | justificado_tipo | justificado_texto
+
+        requiere_atencion = (
+            estado_punto.eq("no cumple")
+            | (estado_punto.eq("no evaluado") & ~esta_justificado)
+        )
+
+        d = d[requiere_atencion].copy()
+
+        if d.empty:
+            continue
+
         for _, p in d.iterrows():
             filas.append({
-                "fecha":s.get("fecha"), "hora":s.get("hora"), "id_sesion":s.get("id_sesion"),
-                "codigo_equipo":s.get("codigo_equipo"), "nombre_equipo":s.get("nombre_equipo"),
-                "laboratorio":s.get("laboratorio"), "responsable":s.get("responsable"),
-                "estado_sesion":s.get("estado"), "punto":p.get("punto"), "resultado":p.get("resultado"),
-                "limite_inferior":p.get("limite_inferior"), "limite_superior":p.get("limite_superior"),
-                "estado_punto":p.get("estado_punto"), "observacion":p.get("observacion"),
+                "fecha": s.get("fecha"),
+                "hora": s.get("hora"),
+                "id_sesion": s.get("id_sesion"),
+                "codigo_equipo": s.get("codigo_equipo"),
+                "nombre_equipo": s.get("nombre_equipo"),
+                "laboratorio": s.get("laboratorio"),
+                "responsable": s.get("responsable"),
+                "estado_sesion": s.get("estado"),
+                "punto": p.get("punto"),
+                "resultado": p.get("resultado"),
+                "limite_inferior": p.get("limite_inferior"),
+                "limite_superior": p.get("limite_superior"),
+                "estado_punto": p.get("estado_punto"),
+                "observacion": p.get("observacion"),
             })
-    if not filas: return pd.DataFrame(columns=cols)
-    out = pd.DataFrame(filas)
-    out["fecha_hora"] = pd.to_datetime(out["fecha"].astype(str)+" "+out["hora"].astype(str), errors="coerce")
-    return out.sort_values("fecha_hora", ascending=False).head(limite)[cols].reset_index(drop=True)
 
+    if not filas:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame(filas)
+    out["fecha_hora"] = pd.to_datetime(
+        out["fecha"].astype(str) + " " + out["hora"].astype(str),
+        errors="coerce",
+    )
+
+    return (
+        out.sort_values("fecha_hora", ascending=False)
+        .head(limite)[cols]
+        .reset_index(drop=True)
+    )
 
 def obtener_alertas(limite=8):
     alertas = []
