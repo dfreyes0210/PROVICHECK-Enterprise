@@ -709,14 +709,14 @@ def obtener_verificaciones_atencion(limite=20):
         sesiones["estado"].fillna("").astype(str).str.strip().str.lower()
     )
 
-    # Solo sesiones que pueden contener una situación que requiera atención.
-    # Incluimos el estado nuevo para revisar sus puntos, pero los justificados
-    # se excluyen más abajo.
+    # Solo las sesiones realmente problemáticas llegan al Dashboard.
+    # Una sesión "Completa con puntos no evaluados" ya fue cerrada por
+    # Verificaciones con sus puntos no evaluados debidamente justificados,
+    # por lo tanto NO debe generar alertas ni acciones inmediatas.
     sesiones = sesiones[
         sesiones["_estado_norm"].isin([
             "no conforme",
             "incompleta",
-            "completa con puntos no evaluados",
         ])
     ]
 
