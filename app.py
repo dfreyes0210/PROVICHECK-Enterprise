@@ -217,10 +217,38 @@ resumen = obtener_resumen_programacion()
 salud = obtener_indice_salud()
 estado_general = obtener_estado_general()
 
-acciones = obtener_acciones_inmediatas(8)
+opciones_periodo = {
+    "Últimos 7 días": 7,
+    "Últimos 15 días": 15,
+    "Últimos 30 días": 30,
+    "Últimos 60 días": 60,
+    "Últimos 90 días": 90,
+    "Todo el histórico": None,
+}
+
+periodo_analisis = st.selectbox(
+    "📅 Período de análisis",
+    options=list(opciones_periodo.keys()),
+    index=2,
+    key="dashboard_periodo_analisis",
+    help=(
+        "Controla Acciones inmediatas y Verificaciones por atender. "
+        "No elimina ni modifica registros históricos."
+    ),
+)
+
+dias_analisis = opciones_periodo[periodo_analisis]
+
+acciones = obtener_acciones_inmediatas(
+    8,
+    dias_analisis=dias_analisis,
+)
 alertas = obtener_alertas(6)
 patrones = obtener_patrones_alerta(30, 12)
-no_conformes = obtener_verificaciones_atencion(12)
+no_conformes = obtener_verificaciones_atencion(
+    12,
+    dias_analisis=dias_analisis,
+)
 
 pendientes_periodo = obtener_equipos_pendientes_periodo(1000)
 cumplidos_periodo = obtener_equipos_cumplidos_periodo(1000)

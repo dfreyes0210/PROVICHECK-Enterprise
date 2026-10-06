@@ -685,7 +685,7 @@ def obtener_patrones_alerta(dias_alerta=30, limite=20):
     return base.sort_values(["estado_patron","dias_restantes"]).head(limite)[cols_out].reset_index(drop=True)
 
 
-def obtener_verificaciones_atencion(limite=20):
+def obtener_verificaciones_atencion(limite=20, dias_analisis=None):
     """Devuelve solo verificaciones que realmente requieren atención.
 
     Reglas PROVICHECK:
@@ -719,6 +719,24 @@ def obtener_verificaciones_atencion(limite=20):
             "incompleta",
         ])
     ]
+
+    # Filtro temporal del Dashboard.
+    # Se aplica sobre la fecha de la sesión sin modificar ni eliminar
+    # información histórica de Supabase.
+    if dias_analisis is not None and not sesiones.empty and "fecha" in sesiones.columns:
+        fechas_sesion = pd.to_datetime(
+            sesiones["fecha"],
+            errors="coerce",
+        ).dt.date
+
+        fecha_desde = _ahora().date() - pd.Timedelta(
+            days=max(int(dias_analisis) - 1, 0)
+        )
+
+        sesiones = sesiones[
+            fechas_sesion.ge(fecha_desde)
+            & fechas_sesion.le(_ahora().date())
+        ].copy()
 
     filas = []
 
@@ -817,25 +835,6 @@ def obtener_verificaciones_atencion(limite=20):
         return pd.DataFrame(columns=cols)
 
     out = pd.DataFrame(filas)
-
-    # Barrera final de seguridad del Dashboard.
-    # Una sesión cerrada como "Completa con puntos no evaluados" representa
-    # puntos no evaluados debidamente justificados y nunca debe mostrarse
-    # como pendiente ni generar una acción inmediata.
-    estado_salida = (
-        out["estado_sesion"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .str.lower()
-    )
-    out = out[
-        ~estado_salida.eq("completa con puntos no evaluados")
-    ].copy()
-
-    if out.empty:
-        return pd.DataFrame(columns=cols)
-
     out["fecha_hora"] = pd.to_datetime(
         out["fecha"].astype(str) + " " + out["hora"].astype(str),
         errors="coerce",
