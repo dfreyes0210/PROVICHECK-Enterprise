@@ -817,6 +817,25 @@ def obtener_verificaciones_atencion(limite=20):
         return pd.DataFrame(columns=cols)
 
     out = pd.DataFrame(filas)
+
+    # Barrera final de seguridad del Dashboard.
+    # Una sesión cerrada como "Completa con puntos no evaluados" representa
+    # puntos no evaluados debidamente justificados y nunca debe mostrarse
+    # como pendiente ni generar una acción inmediata.
+    estado_salida = (
+        out["estado_sesion"]
+        .fillna("")
+        .astype(str)
+        .str.strip()
+        .str.lower()
+    )
+    out = out[
+        ~estado_salida.eq("completa con puntos no evaluados")
+    ].copy()
+
+    if out.empty:
+        return pd.DataFrame(columns=cols)
+
     out["fecha_hora"] = pd.to_datetime(
         out["fecha"].astype(str) + " " + out["hora"].astype(str),
         errors="coerce",
