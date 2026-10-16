@@ -97,3 +97,62 @@ def evaluar_resultado(resultado_observado, valor_nominal, limite_inferior, limit
         "estado": "Cumple" if cumple else "No cumple",
         "mensaje": "Resultado dentro de límites reales." if cumple else "Resultado fuera de límites reales.",
     }
+
+def corregir_indice_refraccion(resultado_observado, temperatura_observada,
+                              coeficiente_temperatura, temperatura_referencia=25.0):
+    """Corrige el índice de refracción según el coeficiente vigente del patrón.
+
+    Fórmula: n_corregido = n_observado + (T_referencia - T_observada) * C.
+    No redondea antes de evaluar el cumplimiento.
+    """
+    valores = {
+        "resultado_observado": resultado_observado,
+        "temperatura_observada": temperatura_observada,
+        "coeficiente_temperatura": coeficiente_temperatura,
+        "temperatura_referencia": temperatura_referencia,
+    }
+    numeros = {nombre: limpiar_numero(valor) for nombre, valor in valores.items()}
+    if any(valor is None or not math.isfinite(valor) for valor in numeros.values()):
+        raise ValueError("La lectura, temperatura, coeficiente y referencia deben ser números finitos.")
+    return (numeros["resultado_observado"] +
+            (numeros["temperatura_referencia"] - numeros["temperatura_observada"]) *
+            numeros["coeficiente_temperatura"])
+
+
+def evaluar_indice_refraccion_corregido(resultado_observado, temperatura_observada,
+                                        coeficiente_temperatura, valor_nominal,
+                                        limite_inferior, limite_superior,
+                                        temperatura_referencia=25.0,
+                                        version_correccion=""):
+    """Evalúa límites ABSOLUTOS (no tolerancias relativas al nominal).
+
+    Devuelve los datos necesarios para trazabilidad. Los límites deben ser
+    los valores reales mínimo y máximo, como en 04_Verificaciones.py.
+    """
+    corregido = corregir_indice_refraccion(
+        resultado_observado, temperatura_observada,
+        coeficiente_temperatura, temperatura_referencia,
+    )
+    nominal = limpiar_numero(valor_nominal)
+    inferior = limpiar_numero(limite_inferior)
+    superior = limpiar_numero(limite_superior)
+    if any(v is None or not math.isfinite(v) for v in (nominal, inferior, superior)):
+        raise ValueError("El patrón y los límites absolutos deben estar configurados.")
+    if inferior > superior:
+        raise ValueError("El límite inferior no puede superar el límite superior.")
+    cumple = inferior <= corregido <= superior
+    return {
+        "resultado_observado": limpiar_numero(resultado_observado),
+        "temperatura_observada": limpiar_numero(temperatura_observada),
+        "coeficiente_temperatura": limpiar_numero(coeficiente_temperatura),
+        "temperatura_referencia": limpiar_numero(temperatura_referencia),
+        "resultado_corregido": corregido,
+        "resultado": corregido,
+        "valor_nominal": nominal,
+        "error": corregido - nominal,
+        "limite_inferior_real": inferior,
+        "limite_superior_real": superior,
+        "cumple": cumple,
+        "estado": "Cumple" if cumple else "No cumple",
+        "version_correccion": str(version_correccion or ""),
+    }

@@ -25,6 +25,7 @@ from utils.diagnostico import generar_diagnostico_sesion
 from utils.verificacion_engine import (
     obtener_puntos_equipo,
     preparar_punto_para_verificacion,
+    evaluar_indice_refraccion_corregido,
 )
 
 st.set_page_config(
@@ -302,6 +303,10 @@ def evaluar_patron(
         "marca": "",
         "lote": "",
         "valor_nominal": None,
+        "tipo_correccion": "",
+        "coeficiente_temperatura": None,
+        "temperatura_referencia": None,
+        "version_correccion": "",
         "unidad": "",
         "fecha_vencimiento": None,
         "fecha_vencimiento_texto": "Sin fecha",
@@ -368,6 +373,10 @@ def evaluar_patron(
                 datos_patron.get("valor_nominal_g")
             ),
             "unidad": texto_seguro(datos_patron.get("unidad"), ""),
+            "tipo_correccion": texto_seguro(datos_patron.get("tipo_correccion"), ""),
+            "coeficiente_temperatura": numero_seguro(datos_patron.get("coeficiente_temperatura")),
+            "temperatura_referencia": numero_seguro(datos_patron.get("temperatura_referencia")),
+            "version_correccion": texto_seguro(datos_patron.get("version_correccion"), ""),
             "fecha_vencimiento": fecha_vencimiento,
             "fecha_vencimiento_texto": (
                 fecha_vencimiento.strftime("%d/%m/%Y")
@@ -1065,6 +1074,34 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                 formato_visual,
             )
 
+            # Solo los puntos marcados en la base maestra usan corrección.
+            correccion_temperatura = (
+                texto_seguro(fila_original.get("tipo_calculo"), "").upper()
+                == "CORRECCION_TEMPERATURA"
+            )
+            coeficiente = info_patron.get("coeficiente_temperatura")
+            temperatura_referencia = info_patron.get("temperatura_referencia")
+            configuracion_correccion_valida = (
+                info_patron.get("tipo_correccion", "").upper() == "LINEAL_TEMPERATURA"
+                and coeficiente is not None
+                and temperatura_referencia is not None
+                and bool(info_patron.get("version_correccion"))
+            )
+            if correccion_temperatura:
+                st.caption("🌡️ Corrección automática por temperatura del patrón")
+                if not configuracion_correccion_valida:
+                    st.error(
+                        "Falta configurar el coeficiente, la temperatura de referencia "
+                        "o la versión de corrección en Equipos_Patrones. "
+                        "Este punto no podrá evaluarse hasta corregir la configuración."
+                    )
+                else:
+                    st.caption(
+                        f"Referencia: {temperatura_referencia:.2f} °C · "
+                        f"Coeficiente: {coeficiente:+.9f} por °C · "
+                        f"Versión: {info_patron['version_correccion']}"
+                    )
+
             etiqueta_resultado = (
                 "Resultado observado (%)"
                 if es_formato_porcentaje(formato_visual)
@@ -1089,6 +1126,17 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     )
                 ),
             )
+
+            temperatura_capturada = None
+            if correccion_temperatura:
+                temperatura_capturada = st.number_input(
+                    "Temperatura observada (°C)",
+                    value=None,
+                    format="%.2f",
+                    key=f"temperatura_{codigo_equipo}_{id_punto}",
+                    disabled=info_patron["bloqueado"],
+                    help="Temperatura medida durante la lectura del índice de refracción.",
+                )
 
             if info_patron["bloqueado"]:
                 resultado = None
@@ -1143,60 +1191,89 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     else observacion_tipo
                 )
 
-            resultado_num = valor_desde_captura(
-                resultado,
-                formato_visual,
-            )
-            error_calculado = (
-                resultado_num - valor_nominal
-                if resultado_num is not None and valor_nominal is not None
-                else None
-            )
-
-            if (
-                resultado_num is not None
-                and limite_inferior is not None
-                and limite_superior is not None
-            ):
-                cumple_calculado = (
-                    limite_inferior <= resultado_num <= limite_superior
+            resultado_observado = None
+            resultado_corregido = None
+            error_correccion = ""
+            resultado_num = valor_desde_captura(resultado, formato_visual)
+            if correccion_temperatura:
+                resultado_observado = resultado_num
+                resultado_num = None  # Nunca evaluar el valor sin corregir.
+                if (
+                    not info_patron["bloqueado"]
+                    and configuracion_correccion_valida
+                    and resultado_observado is not None
+                    and temperatura_capturada is not None
+                ):
+                    try:
+                        evaluacion = evaluar_indice_refraccion_corregido(
+                            resultado_observado=resultado_observado,
+                            temperatura_observada=temperatura_capturada,
+                            coeficiente_temperatura=coeficiente,
+                            valor_nominal=valor_nominal,
+                            limite_inferior=limite_inferior,
+                            limite_superior=limite_superior,
+                            temperatura_referencia=temperatura_referencia,
+                            version_correccion=info_patron["version_correccion"],
+                        )
+                        resultado_num = evaluacion["resultado"]
+                        resultado_corregido = evaluacion["resultado_corregido"]
+                    except (ValueError, TypeError) as exc:
+                        error_correccion = str(exc)
+                if resultado_corregido is not None:
+                    st.info(
+                        "Índice corregido: "
+                        f"{resultado_corregido:.8f} · "
+                        f"Desviación: {evaluacion['error']:+.8f}"
+                    )
+                elif not info_patron["bloqueado"]:
+                    st.warning(
+                        error_correccion or
+                        "Ingrese la lectura y la temperatura; se requieren ambas "
+                        "para evaluar este punto."
+                    )
+            if not correccion_temperatura or resultado_corregido is None:
+                error_calculado = (
+                    resultado_num - valor_nominal
+                    if resultado_num is not None and valor_nominal is not None
+                    else None
                 )
-            else:
-                cumple_calculado = None
+                if (
+                    resultado_num is not None
+                    and limite_inferior is not None
+                    and limite_superior is not None
+                ):
+                    cumple_calculado = (
+                        limite_inferior <= resultado_num <= limite_superior
+                    )
+                else:
+                    cumple_calculado = None
+                evaluacion = {
+                    "error": error_calculado,
+                    "limite_inferior_real": limite_inferior,
+                    "limite_superior_real": limite_superior,
+                    "cumple": cumple_calculado,
+                }
 
-            evaluacion = {
-                "error": error_calculado,
-                "limite_inferior_real": limite_inferior,
-                "limite_superior_real": limite_superior,
-                "cumple": cumple_calculado,
-            }
-
-            st.write(
-                f"**Error calculado:** "
-                f"{formatear_numero(
-                    valor_para_visualizacion(
-                        evaluacion.get('error'),
-                        formato_visual,
-                    ),
-                    decimales_punto,
-                )} {unidad_visual}"
+            error_texto = formatear_numero(
+                valor_para_visualizacion(evaluacion.get("error"), formato_visual),
+                decimales_punto,
             )
+            inferior_texto = formatear_numero(
+                valor_para_visualizacion(
+                    evaluacion.get("limite_inferior_real"), formato_visual
+                ),
+                decimales_punto,
+            )
+            superior_texto = formatear_numero(
+                valor_para_visualizacion(
+                    evaluacion.get("limite_superior_real"), formato_visual
+                ),
+                decimales_punto,
+            )
+            st.write(f"**Error calculado:** {error_texto} {unidad_visual}")
             st.write(
-                f"**Intervalo real:** "
-                f"{formatear_numero(
-                    valor_para_visualizacion(
-                        evaluacion.get('limite_inferior_real'),
-                        formato_visual,
-                    ),
-                    decimales_punto,
-                )} a "
-                f"{formatear_numero(
-                    valor_para_visualizacion(
-                        evaluacion.get('limite_superior_real'),
-                        formato_visual,
-                    ),
-                    decimales_punto,
-                )} {unidad_visual}"
+                f"**Intervalo real:** {inferior_texto} a "
+                f"{superior_texto} {unidad_visual}"
             )
 
             no_evaluado_justificado = (
@@ -1233,6 +1310,21 @@ for i, (_, fila) in enumerate(puntos_equipo.iterrows()):
                     "nombre_chequeo": nombre_chequeo,
                     "valor_nominal": valor_nominal,
                     "resultado": resultado_num,
+                    "resultado_observado": resultado_observado,
+                    "temperatura_observada": (
+                        temperatura_capturada if resultado_corregido is not None else None
+                    ),
+                    "coeficiente_temperatura": (
+                        coeficiente if resultado_corregido is not None else None
+                    ),
+                    "temperatura_referencia": (
+                        temperatura_referencia if resultado_corregido is not None else None
+                    ),
+                    "resultado_corregido": resultado_corregido,
+                    "version_correccion": (
+                        info_patron.get("version_correccion", "")
+                        if resultado_corregido is not None else ""
+                    ),
                     "error": evaluacion.get("error"),
                     "formato_visual": formato_visual,
                     "limite_inferior": evaluacion.get(

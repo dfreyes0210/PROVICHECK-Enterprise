@@ -54,6 +54,11 @@ def guardar_sesion_supabase(
         "estado_patron", "fecha_vencimiento_patron", "valor_nominal",
         "resultado", "error", "limite_inferior", "limite_superior",
         "estado_punto", "observacion",
+        # Trazabilidad de la corrección por temperatura (refractómetros).
+        # En verificaciones convencionales estos campos quedan en NULL.
+        "resultado_observado", "temperatura_observada",
+        "coeficiente_temperatura", "temperatura_referencia",
+        "resultado_corregido", "version_correccion",
     }
 
     detalles_json = []
