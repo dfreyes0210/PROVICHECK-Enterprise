@@ -738,7 +738,8 @@ def sidebar_pro():
         st.page_link("pages/01_Equipos.py", label="🧪 Equipos")
         st.page_link("pages/02_Hoja_de_Vida.py", label="📘 Hoja de Vida")
         st.page_link("pages/04_Verificaciones.py", label="✅ Verificaciones")
-
+        st.page_link("pages/05_Pruebas_de_Aptitud.py", label="🧪 Pruebas de Aptitud")
+        
         if rol_original == "Administrador":
             st.page_link(
                 "pages/03_Administracion.py",
