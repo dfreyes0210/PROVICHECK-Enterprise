@@ -7,6 +7,7 @@ from utils.ui import aplicar_estilo, encabezado, pie_pagina, requerir_autenticac
 from utils.pruebas_aptitud_db import (
     listar_campanas, listar_materiales, listar_parametros,
     crear_campana_borrador, publicar_campana,
+    consultar_mi_participacion, registrar_mi_participacion,
 )
 
 ZONA = ZoneInfo('America/Bogota')
@@ -42,7 +43,7 @@ a,b,c = st.columns(3)
 a.metric('Participante',usuario)
 b.metric('Laboratorio','Fábrica')
 c.metric('Fecha',datetime.now(ZONA).strftime('%d/%m/%Y'))
-st.info('Etapa 3A: publicación de campañas. El registro de resultados aún no está habilitado.')
+st.info('Etapa 3B: aceptación de condiciones y declaración de conflictos de interés. El ingreso de resultados aún no está habilitado.')
 
 t1,t2,t3,t4 = st.tabs(['📅 Campañas','🧪 Registrar resultados','📊 Evaluación y dashboard','📄 Informes'])
 with t1:
@@ -140,11 +141,53 @@ with t1:
             except Exception as exc:
                 st.error(f'No se pudo guardar: {exc}')
 with t2:
-    st.info('Próxima etapa: aceptación de condiciones, resultados duplicados y envíos definitivos.')
+    st.subheader('Participación en campañas publicadas')
+    st.caption('La declaración se registra una sola vez por campaña y no puede editarse desde esta pantalla.')
+    st.info('En esta etapa solo se registra la participación. Los resultados por duplicado se habilitarán posteriormente.')
+    try:
+        publicadas = [c for c in listar_campanas() if c['estado'] == 'publicada']
+        if not publicadas:
+            st.info('No hay campañas publicadas disponibles.')
+        for camp in publicadas:
+            with st.container(border=True):
+                st.markdown(f"**{camp['codigo']} · {camp['titulo']}**")
+                st.caption(f"Apertura: {mostrar_fecha(camp['fecha_apertura'])} | Cierre: {mostrar_fecha(camp['fecha_cierre'])}")
+                registro = consultar_mi_participacion(camp['id'])
+                if registro:
+                    st.success('Tu aceptación y declaración ya quedaron registradas.')
+                    if registro.get('conflicto_interes'):
+                        st.warning('Declaraste un conflicto de interés. Tu participación queda bloqueada para el registro de resultados hasta que exista una revisión formal.')
+                    else:
+                        st.caption('Sin conflicto de interés declarado. El registro de resultados aún no está habilitado.')
+                else:
+                    ahora = datetime.now(ZONA)
+                    apertura = datetime.fromisoformat(camp['fecha_apertura'].replace('Z', '+00:00'))
+                    cierre = datetime.fromisoformat(camp['fecha_cierre'].replace('Z', '+00:00'))
+                    if not (apertura <= ahora <= cierre):
+                        st.warning('La campaña no está dentro del periodo habilitado para participar.')
+                    else:
+                        with st.form(f"pa_participacion_{camp['id']}"):
+                            st.markdown('**Condiciones de participación**')
+                            st.write('Me comprometo a analizar las muestras de manera independiente, mantener la confidencialidad de los resultados, seguir los métodos vigentes y reportar cualquier situación que comprometa mi imparcialidad.')
+                            acepto = st.checkbox('He leído y acepto las condiciones de participación.')
+                            conflicto = st.radio('¿Existe algún conflicto de interés o impedimento?', ['Selecciona una respuesta', 'No', 'Sí'], horizontal=True)
+                            detalle = st.text_area('Describe el conflicto o impedimento (obligatorio si respondes Sí)', max_chars=2000)
+                            enviar = st.form_submit_button('Registrar aceptación y declaración', type='primary')
+                        if enviar:
+                            try:
+                                if conflicto == 'Selecciona una respuesta':
+                                    raise ValueError('Selecciona Sí o No en la declaración de conflicto de interés.')
+                                registrar_mi_participacion(camp['id'], acepto, conflicto == 'Sí', detalle)
+                                st.success('Participación registrada correctamente.')
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f'No fue posible registrar tu participación: {exc}')
+    except Exception as exc:
+        st.error(f'No fue posible consultar las participaciones: {exc}')
 with t3:
     st.info('Próxima etapa: mediana, desviación estándar, z-score y dashboard.')
 with t4:
     st.info('Próxima etapa: informes PDF por material y campaña.')
 st.divider()
-st.caption('PROVICHECK · Pruebas de Aptitud · Fase 3A')
+st.caption('PROVICHECK · Pruebas de Aptitud · Fase 3B')
 pie_pagina()

@@ -120,3 +120,41 @@ def publicar_campana(campana_id):
     if r.data is not True:
         raise RuntimeError('Supabase no confirmó la publicación.')
     return True
+
+
+def consultar_mi_participacion(campana_id):
+    """Consulta exclusivamente la declaración del usuario de la sesión."""
+    actor = identidad()
+    r = (obtener_cliente_supabase().table('pa_participaciones')
+         .select('id,campana_id,condiciones_aceptadas,fecha_aceptacion,conflicto_interes,declaracion_impedimento')
+         .eq('campana_id', int(campana_id))
+         .eq('id_usuario', actor)
+         .limit(1).execute())
+    return r.data[0] if r.data else None
+
+
+def registrar_mi_participacion(campana_id, condiciones_aceptadas, conflicto_interes, declaracion=''):
+    """Registro único e irreversible en fase 3B; identidad derivada de sesión."""
+    actor = identidad()
+    if condiciones_aceptadas is not True:
+        raise ValueError('Debes aceptar las condiciones de participación.')
+    if type(conflicto_interes) is not bool:
+        raise ValueError('Debes declarar expresamente si existe conflicto de interés.')
+    detalle = str(declaracion or '').strip()
+    if conflicto_interes and not detalle:
+        raise ValueError('Describe el posible conflicto de interés.')
+    try:
+        cid = int(campana_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Campaña inválida.') from exc
+    if cid <= 0:
+        raise ValueError('Campaña inválida.')
+    r = obtener_cliente_supabase().rpc('pa_registrar_participacion', {
+        'p_campana_id': cid,
+        'p_actor': actor,
+        'p_conflicto': conflicto_interes,
+        'p_declaracion': detalle if conflicto_interes else None,
+    }).execute()
+    if r.data is None:
+        raise RuntimeError('Supabase no confirmó la participación.')
+    return int(r.data)
