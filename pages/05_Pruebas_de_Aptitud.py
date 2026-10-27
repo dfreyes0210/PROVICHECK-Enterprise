@@ -1,10 +1,13 @@
-"""PROVICHECK | Pruebas de Aptitud, creación de campañas multimaterial."""
+"""PROVICHECK | Pruebas de Aptitud. Fase 3A: publicación controlada."""
 import unicodedata
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 import streamlit as st
 from utils.ui import aplicar_estilo, encabezado, pie_pagina, requerir_autenticacion, sidebar_pro
-from utils.pruebas_aptitud_db import listar_campanas, listar_materiales, listar_parametros, crear_campana_borrador
+from utils.pruebas_aptitud_db import (
+    listar_campanas, listar_materiales, listar_parametros,
+    crear_campana_borrador, publicar_campana,
+)
 
 ZONA = ZoneInfo('America/Bogota')
 
@@ -39,7 +42,7 @@ a,b,c = st.columns(3)
 a.metric('Participante',usuario)
 b.metric('Laboratorio','Fábrica')
 c.metric('Fecha',datetime.now(ZONA).strftime('%d/%m/%Y'))
-st.info('Etapa 2: creación de campañas en borrador. Registro de resultados aún no habilitado.')
+st.info('Etapa 3A: publicación de campañas. El registro de resultados aún no está habilitado.')
 
 t1,t2,t3,t4 = st.tabs(['📅 Campañas','🧪 Registrar resultados','📊 Evaluación y dashboard','📄 Informes'])
 with t1:
@@ -57,6 +60,17 @@ with t1:
                         st.caption(f"Plazo particular: {mostrar_fecha(mat['fecha_apertura'])} a {mostrar_fecha(mat['fecha_cierre'])}")
                     pars = listar_parametros(mat['id'])
                     st.caption('Parámetros: ' + ', '.join(p['nombre'] for p in pars))
+                if gestor and camp['estado'] == 'borrador':
+                    st.divider()
+                    st.warning('Publicar permite que los analistas vean esta campaña. Esta acción no se revierte desde esta pantalla.')
+                    confirmar = st.checkbox('Confirmo que revisé materiales, parámetros y fechas', key=f"pa_confirma_{camp['id']}")
+                    if st.button('📢 Publicar campaña', key=f"pa_publicar_{camp['id']}", disabled=not confirmar, type='primary'):
+                        try:
+                            publicar_campana(camp['id'])
+                            st.success('Campaña publicada correctamente y registrada en auditoría.')
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f'No se pudo publicar: {exc}')
     except Exception as exc:
         st.error(f'Error consultando campañas: {exc}')
 
@@ -132,5 +146,5 @@ with t3:
 with t4:
     st.info('Próxima etapa: informes PDF por material y campaña.')
 st.divider()
-st.caption('PROVICHECK · Pruebas de Aptitud · Fase 2B')
+st.caption('PROVICHECK · Pruebas de Aptitud · Fase 3A')
 pie_pagina()

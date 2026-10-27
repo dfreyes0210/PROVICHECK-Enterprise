@@ -62,7 +62,7 @@ def crear_campana_borrador(datos):
     inicio, fin = datos.get('fecha_apertura'), datos.get('fecha_cierre')
     if not codigo or not titulo:
         raise ValueError('Código y título son obligatorios.')
-    if not isinstance(inicio, datetime) or not isinstance(fin, datetime) or inicio.tzinfo is None or fin <= inicio:
+    if not isinstance(inicio, datetime) or not isinstance(fin, datetime) or inicio.tzinfo is None or fin.tzinfo is None or fin <= inicio:
         raise ValueError('Periodo general inválido.')
     materiales = datos.get('materiales') or []
     if not materiales:
@@ -89,8 +89,8 @@ def crear_campana_borrador(datos):
             nombres_par.add(normalizar(pn))
             try:
                 dec = int(p.get('decimales', 2))
-            except (ValueError, TypeError):
-                raise ValueError(f'Decimales inválidos para {pn}.')
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f'Decimales inválidos para {pn}.') from exc
             if not 0 <= dec <= 8:
                 raise ValueError('Los decimales deben estar entre 0 y 8.')
             payload_par.append({'nombre':pn,'unidad':str(p.get('unidad') or '').strip(),'decimales':dec})
@@ -104,3 +104,19 @@ def crear_campana_borrador(datos):
     if r.data is None:
         raise RuntimeError('Supabase no devolvió el ID de campaña.')
     return int(r.data)
+
+def publicar_campana(campana_id):
+    """Publicación atómica; la función SQL comprueba estado, contenido y registra auditoría."""
+    actor = identidad(gestor=True)
+    try:
+        identificador = int(campana_id)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Identificador de campaña inválido.') from exc
+    if identificador <= 0:
+        raise ValueError('Identificador de campaña inválido.')
+    r = obtener_cliente_supabase().rpc('pa_publicar_campana', {
+        'p_campana_id': identificador, 'p_actor': actor
+    }).execute()
+    if r.data is not True:
+        raise RuntimeError('Supabase no confirmó la publicación.')
+    return True
