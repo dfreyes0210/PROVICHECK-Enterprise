@@ -8,6 +8,8 @@ from utils.pruebas_aptitud_db import (
     listar_campanas, listar_materiales, listar_parametros,
     crear_campana_borrador, publicar_campana,
     consultar_mi_participacion, registrar_mi_participacion,
+    listar_parametros_registro, consultar_mi_borrador, guardar_mi_borrador,
+    enviar_mis_resultados_definitivos,
 )
 
 ZONA = ZoneInfo('America/Bogota')
@@ -43,7 +45,7 @@ a,b,c = st.columns(3)
 a.metric('Participante',usuario)
 b.metric('Laboratorio','Fábrica')
 c.metric('Fecha',datetime.now(ZONA).strftime('%d/%m/%Y'))
-st.info('Etapa 3B: aceptación de condiciones y declaración de conflictos de interés. El ingreso de resultados aún no está habilitado.')
+st.info('Etapa 4B: registro por duplicado, borradores y envío definitivo de resultados por material.')
 
 t1,t2,t3,t4 = st.tabs(['📅 Campañas','🧪 Registrar resultados','📊 Evaluación y dashboard','📄 Informes'])
 with t1:
@@ -143,7 +145,7 @@ with t1:
 with t2:
     st.subheader('Participación en campañas publicadas')
     st.caption('La declaración se registra una sola vez por campaña y no puede editarse desde esta pantalla.')
-    st.info('En esta etapa solo se registra la participación. Los resultados por duplicado se habilitarán posteriormente.')
+    st.info('Puedes guardar borradores y enviar definitivamente los resultados por material. Después del envío no podrás modificarlos.')
     try:
         publicadas = [c for c in listar_campanas() if c['estado'] == 'publicada']
         if not publicadas:
@@ -158,7 +160,7 @@ with t2:
                     if registro.get('conflicto_interes'):
                         st.warning('Declaraste un conflicto de interés. Tu participación queda bloqueada para el registro de resultados hasta que exista una revisión formal.')
                     else:
-                        st.caption('Sin conflicto de interés declarado. El registro de resultados aún no está habilitado.')
+                        st.caption('Sin conflicto de interés declarado. Puedes registrar borradores durante las fechas habilitadas.')
                 else:
                     ahora = datetime.now(ZONA)
                     apertura = datetime.fromisoformat(camp['fecha_apertura'].replace('Z', '+00:00'))
@@ -184,10 +186,95 @@ with t2:
                                 st.error(f'No fue posible registrar tu participación: {exc}')
     except Exception as exc:
         st.error(f'No fue posible consultar las participaciones: {exc}')
+
+    st.divider()
+    st.subheader('Resultados por material')
+    st.caption('Guarda los duplicados en borrador antes de enviarlos definitivamente. Los campos vacíos se conservan como pendientes.')
+    try:
+        for camp in [c for c in listar_campanas() if c['estado'] == 'publicada']:
+            participacion = consultar_mi_participacion(camp['id'])
+            if not participacion or not participacion.get('condiciones_aceptadas'):
+                continue
+            if participacion.get('conflicto_interes'):
+                st.warning(f"{camp['codigo']}: participación bloqueada por conflicto declarado.")
+                continue
+            ahora = datetime.now(ZONA)
+            inicio_c = datetime.fromisoformat(camp['fecha_apertura'].replace('Z', '+00:00'))
+            fin_c = datetime.fromisoformat(camp['fecha_cierre'].replace('Z', '+00:00'))
+            for mat in listar_materiales(camp['id']):
+                mid = mat['id']
+                with st.container(border=True):
+                    st.markdown(f"**{camp['codigo']} · {mat['nombre']}**")
+                    inicio_m = datetime.fromisoformat(mat['fecha_apertura'].replace('Z', '+00:00')) if mat.get('fecha_apertura') else inicio_c
+                    fin_m = datetime.fromisoformat(mat['fecha_cierre'].replace('Z', '+00:00')) if mat.get('fecha_cierre') else fin_c
+                    borrador = consultar_mi_borrador(mid)
+                    if borrador and borrador.get('estado') == 'enviado':
+                        st.success('Resultados enviados definitivamente. No se pueden modificar.')
+                        st.caption(f"Entrega ID: {borrador['id']}")
+                        continue
+                    if not (max(inicio_c, inicio_m) <= ahora <= min(fin_c, fin_m)):
+                        st.warning('El material está fuera de su plazo de registro.')
+                        continue
+                    previos = {int(r['parametro_id']): r for r in (borrador or {}).get('resultados', [])}
+                    parametros = listar_parametros_registro(mid)
+                    if not parametros:
+                        st.warning('Este material no tiene parámetros activos.')
+                        continue
+                    with st.form(f'pa_borrador_{camp["id"]}_{mid}'):
+                        filas = []
+                        for par in parametros:
+                            pid = int(par['id'])
+                            anterior = previos.get(pid, {})
+                            st.markdown(f"**{par['nombre']}** ({par.get('unidad') or 'sin unidad'})")
+                            c1, c2 = st.columns(2)
+                            r1 = c1.text_input('Resultado 1', value=str(anterior.get('resultado_1') if anterior.get('resultado_1') is not None else ''), key=f'pa_r1_{mid}_{pid}')
+                            r2 = c2.text_input('Resultado 2', value=str(anterior.get('resultado_2') if anterior.get('resultado_2') is not None else ''), key=f'pa_r2_{mid}_{pid}')
+                            obs = st.text_input('Observación', value=anterior.get('observacion') or '', key=f'pa_obs_{mid}_{pid}')
+                            filas.append({'parametro_id': pid, 'resultado_1': r1, 'resultado_2': r2, 'observacion': obs})
+                        guardar_borrador = st.form_submit_button('💾 Guardar borrador', type='primary')
+                    if guardar_borrador:
+                        try:
+                            guardar_mi_borrador(camp['id'], mid, filas)
+                            st.success('Borrador guardado correctamente.')
+                            st.rerun()
+                        except Exception as exc:
+                            st.error(f'No se pudo guardar el borrador: {exc}')
+                    if borrador and borrador.get('estado') == 'borrador':
+                        st.divider()
+                        st.markdown('**Envío definitivo del material**')
+                        st.warning('Después de confirmar, los resultados quedarán bloqueados. Revisa los valores y guarda cualquier cambio en el borrador antes de enviarlo.')
+                        resultados_guardados = {int(r['parametro_id']): r for r in borrador.get('resultados', [])}
+                        incompletos = [par['nombre'] for par in parametros
+                                       if (int(par['id']) not in resultados_guardados
+                                           or resultados_guardados[int(par['id'])].get('resultado_1') is None
+                                           or resultados_guardados[int(par['id'])].get('resultado_2') is None)]
+                        if incompletos:
+                            st.warning('Parámetros incompletos: ' + ', '.join(incompletos) + '. Para enviarlos así debes justificarlo.')
+                        with st.form(f'pa_envio_{camp["id"]}_{mid}'):
+                            observacion_envio = st.text_area(
+                                'Observación general del envío' + (' *' if incompletos else ''),
+                                max_chars=2000,
+                                help='Obligatoria si existen parámetros sin los dos resultados.')
+                            confirmar_envio = st.checkbox('Confirmo que revisé los resultados guardados y autorizo el envío definitivo sin posibilidad de edición.')
+                            enviar_definitivo = st.form_submit_button('📤 Enviar resultados definitivamente', type='primary')
+                        if enviar_definitivo:
+                            try:
+                                if not confirmar_envio:
+                                    raise ValueError('Marca la casilla de confirmación antes de enviar.')
+                                if incompletos and not observacion_envio.strip():
+                                    raise ValueError('Debes justificar los resultados incompletos.')
+                                entrega_id = enviar_mis_resultados_definitivos(
+                                    camp['id'], mid, observacion_envio, confirmar_envio)
+                                st.success(f'Resultados enviados definitivamente. Entrega ID: {entrega_id}.')
+                                st.rerun()
+                            except Exception as exc:
+                                st.error(f'No se pudo realizar el envío definitivo: {exc}')
+    except Exception as exc:
+        st.error(f'No fue posible cargar los borradores: {exc}')
 with t3:
     st.info('Próxima etapa: mediana, desviación estándar, z-score y dashboard.')
 with t4:
     st.info('Próxima etapa: informes PDF por material y campaña.')
 st.divider()
-st.caption('PROVICHECK · Pruebas de Aptitud · Fase 3B')
+st.caption('PROVICHECK · Pruebas de Aptitud · Fase 4B')
 pie_pagina()

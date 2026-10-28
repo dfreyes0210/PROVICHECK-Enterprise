@@ -1,6 +1,7 @@
 """PROVICHECK | Campañas de Pruebas de Aptitud. Uso exclusivo en servidor."""
 from __future__ import annotations
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 import unicodedata
 import streamlit as st
 from utils.supabase_client import obtener_cliente_supabase
@@ -121,7 +122,6 @@ def publicar_campana(campana_id):
         raise RuntimeError('Supabase no confirmó la publicación.')
     return True
 
-
 def consultar_mi_participacion(campana_id):
     """Consulta exclusivamente la declaración del usuario de la sesión."""
     actor = identidad()
@@ -131,7 +131,6 @@ def consultar_mi_participacion(campana_id):
          .eq('id_usuario', actor)
          .limit(1).execute())
     return r.data[0] if r.data else None
-
 
 def registrar_mi_participacion(campana_id, condiciones_aceptadas, conflicto_interes, declaracion=''):
     """Registro único e irreversible en fase 3B; identidad derivada de sesión."""
@@ -158,3 +157,124 @@ def registrar_mi_participacion(campana_id, condiciones_aceptadas, conflicto_inte
     if r.data is None:
         raise RuntimeError('Supabase no confirmó la participación.')
     return int(r.data)
+
+def listar_parametros_registro(material_id):
+    """Devuelve identificadores y configuración para el formulario de resultados."""
+    identidad()
+    mid = int(material_id)
+    if mid <= 0:
+        raise ValueError('Material inválido.')
+    respuesta = (obtener_cliente_supabase().table('pa_parametros')
+                 .select('id,material_id,nombre,unidad,decimales,orden,activo')
+                 .eq('material_id', mid).eq('activo', True)
+                 .order('orden').execute())
+    return respuesta.data or []
+
+
+def consultar_mi_borrador(material_id):
+    """Consulta la entrega propia sin mostrar resultados de otros participantes."""
+    actor = identidad()
+    mid = int(material_id)
+    if mid <= 0:
+        raise ValueError('Material inválido.')
+    material = (obtener_cliente_supabase().table('pa_materiales')
+                .select('id,campana_id').eq('id', mid).limit(1).execute())
+    if not material.data:
+        raise ValueError('Material no encontrado.')
+    cid = material.data[0]['campana_id']
+    participacion = (obtener_cliente_supabase().table('pa_participaciones')
+                     .select('id').eq('campana_id', cid)
+                     .eq('id_usuario', actor).limit(1).execute())
+    if not participacion.data:
+        return None
+    entrega = (obtener_cliente_supabase().table('pa_entregas_material')
+               .select('id,estado,material_id,actualizado_en')
+               .eq('participacion_id', participacion.data[0]['id'])
+               .eq('material_id', mid).limit(1).execute())
+    if not entrega.data:
+        return None
+    datos = entrega.data[0]
+    resultados = (obtener_cliente_supabase().table('pa_resultados')
+                  .select('parametro_id,resultado_1,resultado_2,promedio,observacion')
+                  .eq('entrega_id', datos['id']).execute())
+    return {**datos, 'resultados': resultados.data or []}
+
+
+def guardar_mi_borrador(campana_id, material_id, resultados):
+    """Envía un borrador atómico a la RPC; el actor procede de la sesión."""
+    actor = identidad()
+    cid, mid = int(campana_id), int(material_id)
+    if cid <= 0 or mid <= 0:
+        raise ValueError('Campaña o material inválido.')
+    if not isinstance(resultados, list) or not 1 <= len(resultados) <= 100:
+        raise ValueError('Debes enviar entre 1 y 100 parámetros.')
+    payload = []
+    ids = set()
+    for fila in resultados:
+        pid = int(fila['parametro_id'])
+        if pid <= 0 or pid in ids:
+            raise ValueError('Parámetros inválidos o repetidos.')
+        ids.add(pid)
+        registro = {'parametro_id': pid}
+        for campo in ('resultado_1', 'resultado_2'):
+            valor = fila.get(campo)
+            if valor is None or str(valor).strip() == '':
+                registro[campo] = None
+            else:
+                try:
+                    numero = Decimal(str(valor).strip())
+                except (InvalidOperation, ValueError) as exc:
+                    raise ValueError(f'{campo} debe ser numérico.') from exc
+                if not numero.is_finite():
+                    raise ValueError(f'{campo} debe ser finito.')
+                registro[campo] = float(numero)
+        observacion = str(fila.get('observacion') or '').strip()
+        if len(observacion) > 2000:
+            raise ValueError('Observación demasiado extensa.')
+        registro['observacion'] = observacion
+        payload.append(registro)
+    respuesta = obtener_cliente_supabase().rpc('pa_guardar_borrador_resultados', {
+        'p_campana_id': cid, 'p_material_id': mid,
+        'p_actor': actor, 'p_resultados': payload,
+    }).execute()
+    if respuesta.data is None:
+        raise RuntimeError('Supabase no confirmó el guardado.')
+    return int(respuesta.data)
+
+def enviar_mis_resultados_definitivos(campana_id, material_id, observacion='', confirmacion=False):
+    """Envía definitivamente los resultados del usuario autenticado."""
+
+    actor = identidad()
+
+    if confirmacion is not True:
+        raise ValueError('Debes confirmar expresamente el envío definitivo.')
+
+    try:
+        cid = int(campana_id)
+        mid = int(material_id)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Campaña o material inválido.') from exc
+
+    if cid <= 0 or mid <= 0:
+        raise ValueError('Campaña o material inválido.')
+
+    obs = str(observacion or '').strip()
+
+    if len(obs) > 2000:
+        raise ValueError('La observación no puede superar 2000 caracteres.')
+
+    respuesta = obtener_cliente_supabase().rpc(
+        'pa_enviar_resultados_definitivos',
+        {
+            'p_campana_id': cid,
+            'p_material_id': mid,
+            'p_actor': actor,
+            'p_observacion': obs or None,
+            'p_confirmacion': True,
+        }
+    ).execute()
+
+    if respuesta.data is None:
+        raise RuntimeError('Supabase no confirmó el envío definitivo.')
+
+    return int(respuesta.data)
