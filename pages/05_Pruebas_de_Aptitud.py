@@ -3,6 +3,9 @@ import unicodedata
 from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 import streamlit as st
+import pandas as pd
+import plotly.graph_objects as go
+from utils.pruebas_aptitud_estadistica import evaluar_parametro, evaluar_simulacion_color
 from utils.ui import aplicar_estilo, encabezado, pie_pagina, requerir_autenticacion, sidebar_pro
 from utils.pruebas_aptitud_db import (
     listar_campanas, listar_materiales, listar_parametros,
@@ -45,7 +48,7 @@ a,b,c = st.columns(3)
 a.metric('Participante',usuario)
 b.metric('Laboratorio','Fábrica')
 c.metric('Fecha',datetime.now(ZONA).strftime('%d/%m/%Y'))
-st.info('Etapa 4B: registro por duplicado, borradores y envío definitivo de resultados por material.')
+st.info('Etapa 5B: evaluación estadística y simulación de cinco participantes (sin modificar Supabase).')
 
 t1,t2,t3,t4 = st.tabs(['📅 Campañas','🧪 Registrar resultados','📊 Evaluación y dashboard','📄 Informes'])
 with t1:
@@ -272,9 +275,180 @@ with t2:
     except Exception as exc:
         st.error(f'No fue posible cargar los borradores: {exc}')
 with t3:
-    st.info('Próxima etapa: mediana, desviación estándar, z-score y dashboard.')
+    st.subheader('Evaluación estadística interanalistas')
+    modo_simulado = st.toggle('🧪 Activar simulación de 5 participantes (sin guardar en Supabase)', value=False, key='pa5_modo_simulado')
+    if modo_simulado:
+        st.warning('MODO SIMULACIÓN · Datos ficticios SIM-001 a SIM-005. No son resultados reales, no se guardan en Supabase y no son válidos para autorizar analistas.')
+    st.caption('Solo se incluyen entregas definitivas. Cada participante aporta el promedio de sus dos duplicados completos.')
+    if not gestor:
+        st.info('La evaluación consolidada está reservada al líder del Laboratorio de Fábrica y a los administradores. Los analistas no pueden consultar resultados de otros participantes.')
+    else:
+        try:
+            campanas_eval = [{'id': -1, 'codigo': 'SIMULACION-5B', 'titulo': 'Color · 5 participantes ficticios', 'estado': 'simulación'}] if modo_simulado else listar_campanas()
+            if not campanas_eval:
+                st.info('No hay campañas registradas para evaluar.')
+            else:
+                opciones_c = {f"{c['codigo']} · {c['titulo']} ({c['estado']})": c for c in campanas_eval}
+                etiqueta_c = st.selectbox('Campaña', list(opciones_c), key='pa5_campana')
+                camp_eval = opciones_c[etiqueta_c]
+                materiales_eval = [{'id': -1, 'nombre': 'AZÚCAR BLANCO (SIMULACIÓN)', 'codigo_muestra': 'DEMO'}] if modo_simulado else listar_materiales(camp_eval['id'])
+                if not materiales_eval:
+                    st.info('Esta campaña todavía no tiene materiales.')
+                else:
+                    opciones_m = {f"{m['nombre']} · {m.get('codigo_muestra') or 'Sin código'} [ID {m['id']}]": m for m in materiales_eval}
+                    etiqueta_m = st.selectbox('Material', list(opciones_m), key='pa5_material')
+                    mat_eval = opciones_m[etiqueta_m]
+                    parametros_eval = [{'id': -1, 'nombre': 'Color', 'unidad': 'UI', 'decimales': 2}] if modo_simulado else listar_parametros_registro(mat_eval['id'])
+                    if not parametros_eval:
+                        st.warning('El material no tiene parámetros activos para evaluar.')
+                    else:
+                        opciones_p = {f"{p['nombre']} ({p.get('unidad') or 'sin unidad'}) [ID {p['id']}]": p for p in parametros_eval}
+                        etiqueta_p = st.selectbox('Parámetro', list(opciones_p), key='pa5_parametro')
+                        par_eval = opciones_p[etiqueta_p]
+                        st.markdown('**Desviación estándar para evaluación (σpt)**')
+                        st.caption('Debe proceder del procedimiento estadístico aprobado. No se sustituye automáticamente por la desviación observada de los participantes.')
+                        usar_sigma = st.checkbox('Ingresar σpt para calcular puntuaciones z', value=False, key='pa5_usa_sigma')
+                        if modo_simulado:
+                            st.caption('Para comprobar las categorías puedes usar σpt = 5 UI SOLO en esta simulación. No es un valor aprobado del laboratorio.')
+                        sigma_eval = None
+                        if usar_sigma:
+                            sigma_eval = st.number_input('σpt (valor positivo, en la unidad del parámetro)', min_value=0.000000001, value=5.0 if modo_simulado else 1.0, format='%.8f', key=f"pa5_sigma_{par_eval['id']}")
+                            st.warning('La σpt ingresada es temporal: no se guarda en Supabase ni constituye un criterio aprobado por sí sola.')
+                        if st.button('📊 Generar evaluación', type='primary', key='pa5_generar'):
+                            try:
+                                st.session_state['pa5_reporte'] = (
+                                    evaluar_simulacion_color(sigma_eval) if modo_simulado else
+                                    evaluar_parametro(camp_eval['id'], mat_eval['id'], par_eval['id'], sigma_eval)
+                                )
+                                st.session_state['pa5_seleccion'] = (modo_simulado, camp_eval['id'], mat_eval['id'], par_eval['id'], sigma_eval)
+                            except Exception as exc:
+                                st.session_state.pop('pa5_reporte', None)
+                                st.error(f'No fue posible generar la evaluación: {exc}')
+                        seleccion_actual = (modo_simulado, camp_eval['id'], mat_eval['id'], par_eval['id'], sigma_eval)
+                        reporte = st.session_state.get('pa5_reporte') if st.session_state.get('pa5_seleccion') == seleccion_actual else None
+                        if reporte is not None:
+                            if modo_simulado:
+                                st.error('RESULTADOS SIMULADOS — PROHIBIDO USO EN INFORMES OFICIALES')
+                            dec = max(0, min(int(reporte.get('decimales') or 2), 8))
+                            def fmt_num(x):
+                                return '—' if x is None else f'{x:,.{dec}f}'
+                            resultados = reporte['resultados']
+                            validos = [r for r in resultados if r['promedio'] is not None]
+                            a, b, c, d = st.columns(4)
+                            a.metric('Entregas con resultado', reporte['participantes_con_resultados'])
+                            b.metric('Duplicados completos', reporte['participantes_con_duplicados_completos'])
+                            c.metric('Valor asignado · mediana', fmt_num(reporte['valor_asignado_mediana']))
+                            d.metric('Desv. observada (muestral)', fmt_num(reporte['desviacion_observada_muestral']))
+                            if len(validos) < 3:
+                                st.warning('Evaluación preliminar: hay menos de tres participantes con duplicados completos. No es suficiente para caracterizar de manera robusta el grupo; no se debe emitir una conclusión definitiva.')
+                            if reporte['desviacion_evaluacion'] is None:
+                                st.info('No se han calculado z-scores ni categorías porque todavía no se ha definido σpt.')
+                            st.markdown('#### Resultados individuales')
+                            if not resultados:
+                                st.info('Todavía no existen resultados enviados para este parámetro.')
+                            else:
+                                tabla = pd.DataFrame([{
+                                    'Participante': r['id_usuario'],
+                                    'Resultado 1': r['resultado_1'],
+                                    'Resultado 2': r['resultado_2'],
+                                    'Promedio': r['promedio'],
+                                    'z-score': r['z_score'],
+                                    'Clasificación': r['clasificacion'],
+                                } for r in resultados])
+                                st.dataframe(tabla, hide_index=True, use_container_width=True)
+                                st.download_button('⬇️ Exportar resultados (CSV)', data=tabla.to_csv(index=False).encode('utf-8-sig'),
+                                                   file_name=("SIMULACION_NO_OFICIAL_COLOR_5B.csv" if modo_simulado else f"PA_{camp_eval['codigo']}_material_{mat_eval['id']}_parametro_{par_eval['id']}.csv"),
+                                                   mime='text/csv', key='pa5_descarga_csv')
+                            if validos:
+                                st.markdown('#### Comparación de resultados promedio')
+                                graf = go.Figure()
+                                graf.add_trace(go.Scatter(x=[r['id_usuario'] for r in validos],
+                                                          y=[r['promedio'] for r in validos],
+                                                          mode='markers', name='Promedio por participante',
+                                                          marker=dict(size=11)))
+                                asignado = reporte['valor_asignado_mediana']
+                                graf.add_hline(y=asignado, line_dash='dash', annotation_text='Mediana del grupo')
+                                sigma = reporte['desviacion_evaluacion']
+                                if sigma is not None:
+                                    graf.add_hline(y=asignado + 2*sigma, line_dash='dot', annotation_text='+2 σpt')
+                                    graf.add_hline(y=asignado - 2*sigma, line_dash='dot', annotation_text='−2 σpt')
+                                    graf.add_hline(y=asignado + 3*sigma, line_dash='dashdot', annotation_text='+3 σpt')
+                                    graf.add_hline(y=asignado - 3*sigma, line_dash='dashdot', annotation_text='−3 σpt')
+                                graf.update_layout(xaxis_title='Participante (ID)',
+                                                   yaxis_title=f"{reporte['parametro']} ({reporte['unidad'] or 'sin unidad'})",
+                                                   height=430, margin=dict(l=20,r=20,t=25,b=25))
+                                st.plotly_chart(graf, use_container_width=True)
+                                if sigma is not None:
+                                    st.markdown('#### Gráfica individual de puntuaciones z')
+                                    st.caption('Cada punto corresponde a un participante independiente. Las líneas horizontales representan los criterios provisionales de evaluación.')
+                                    fig_z = go.Figure()
+                                    colores_z = {
+                                        'Satisfactorio': '#16824A',
+                                        'Cuestionable': '#E3A008',
+                                        'No satisfactorio': '#D64545',
+                                    }
+                                    for categoria, color in colores_z.items():
+                                        puntos = [r for r in validos if r['clasificacion'] == categoria and r['z_score'] is not None]
+                                        if puntos:
+                                            fig_z.add_trace(go.Scatter(
+                                                x=[r['id_usuario'] for r in puntos],
+                                                y=[r['z_score'] for r in puntos],
+                                                mode='markers', name=categoria,
+                                                marker=dict(size=14, color=color, line=dict(color='white', width=1)),
+                                                customdata=[r['promedio'] for r in puntos],
+                                                hovertemplate='Participante: %{x}<br>z = %{y:.2f}<br>Promedio = %{customdata:.3f}<extra></extra>',
+                                            ))
+                                    fig_z.add_hline(y=0, line_dash='solid', line_color='#65748B', annotation_text='z = 0')
+                                    for limite, estilo in [(2, 'dot'), (-2, 'dot'), (3, 'dash'), (-3, 'dash')]:
+                                        fig_z.add_hline(y=limite, line_dash=estilo, line_color='#9A6D25' if abs(limite)==2 else '#B34B4B', annotation_text=f'z = {limite:+d}')
+                                    fig_z.update_layout(
+                                        xaxis_title='Participante (ID)', yaxis_title='Puntuación z',
+                                        height=430, margin=dict(l=25, r=35, t=25, b=30),
+                                        legend_title='Clasificación',
+                                    )
+                                    fig_z.update_xaxes(type='category', categoryorder='array',
+                                                       categoryarray=[r['id_usuario'] for r in validos])
+                                    st.plotly_chart(fig_z, use_container_width=True)
+                                    st.markdown('#### Distribución de clasificaciones')
+                                    conteos = pd.Series([r['clasificacion'] for r in validos]).value_counts()
+                                    fig_cat = go.Figure(go.Bar(x=list(conteos.index), y=list(conteos.values),
+                                                               text=list(conteos.values), textposition='auto'))
+                                    fig_cat.update_layout(yaxis_title='Participantes', height=320,
+                                                          margin=dict(l=20,r=20,t=20,b=20))
+                                    st.plotly_chart(fig_cat, use_container_width=True)
+                                    st.caption('Criterio provisional: |z| ≤ 2 satisfactorio; 2 < |z| < 3 cuestionable; |z| ≥ 3 no satisfactorio. Validar contra el procedimiento vigente antes de emitir informes oficiales.')
+                        else:
+                            st.caption('Selecciona campaña, material y parámetro; luego pulsa «Generar evaluación».')
+        except Exception as exc:
+            st.error(f'No fue posible cargar el dashboard estadístico: {exc}')
 with t4:
-    st.info('Próxima etapa: informes PDF por material y campaña.')
+    st.subheader('Informe estadístico de pruebas de aptitud')
+    if not gestor:
+        st.info('Solo el líder autorizado y los administradores pueden generar informes consolidados.')
+    else:
+        reporte_pdf = st.session_state.get('pa5_reporte')
+        seleccion_pdf = st.session_state.get('pa5_seleccion')
+        if reporte_pdf is None or seleccion_pdf is None:
+            st.info('Primero genera una evaluación en la pestaña «Evaluación y dashboard». Luego regresa aquí para obtener el PDF.')
+        else:
+            es_simulacion = bool(seleccion_pdf[0])
+            if es_simulacion:
+                st.warning('INFORME DE SIMULACIÓN · Datos ficticios. No válido para decisiones sobre analistas.')
+            else:
+                st.warning('Informe preliminar. Verifica el procedimiento, la desviación de evaluación y la suficiencia del grupo antes de usarlo oficialmente.')
+            st.write(f"**Material:** {reporte_pdf['material']}  |  **Parámetro:** {reporte_pdf['parametro']}")
+            if st.button('📄 Preparar informe PDF', type='primary', key='pa5_preparar_pdf'):
+                try:
+                    from utils.pruebas_aptitud_informe import generar_informe_pdf
+                    st.session_state['pa5_pdf'] = generar_informe_pdf(reporte_pdf, es_simulacion)
+                    st.session_state['pa5_pdf_origen'] = seleccion_pdf
+                except Exception as exc:
+                    st.session_state.pop('pa5_pdf', None)
+                    st.error(f'No fue posible preparar el PDF: {exc}')
+            if st.session_state.get('pa5_pdf_origen') == seleccion_pdf and st.session_state.get('pa5_pdf'):
+                st.download_button('⬇️ Descargar informe PDF', data=st.session_state['pa5_pdf'],
+                                   file_name='PROVICHECK_Pruebas_Aptitud_SIMULACION.pdf' if es_simulacion else 'PROVICHECK_Pruebas_Aptitud_PRELIMINAR.pdf',
+                                   mime='application/pdf', key='pa5_descargar_pdf')
 st.divider()
-st.caption('PROVICHECK · Pruebas de Aptitud · Fase 4B')
+st.caption('PROVICHECK · Pruebas de Aptitud · Fase 5C')
 pie_pagina()
