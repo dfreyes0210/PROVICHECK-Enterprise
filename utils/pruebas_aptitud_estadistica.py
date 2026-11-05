@@ -1,8 +1,20 @@
 
 """PROVICHECK | Evaluación estadística de pruebas de aptitud.
-Fase 5B: resultados reales y simulación de cinco participantes.
+
+Resultados reales y simulación de cinco participantes.
+
+Criterios:
+- Dispersión principal: desviación estándar muestral de todos
+  los resultados individuales válidos.
+- Dispersión secundaria: desviación estándar muestral de los
+  promedios de los participantes con duplicados completos.
+- Valor asignado: mediana de los promedios por participante.
+- Puntuación z: promedio individual frente al valor asignado,
+  dividido entre la desviación estándar de evaluación (sigma_pt).
+
 Archivo: utils/pruebas_aptitud_estadistica.py
 """
+
 from __future__ import annotations
 
 from decimal import Decimal, InvalidOperation
@@ -14,13 +26,101 @@ from utils.supabase_client import obtener_cliente_supabase
 
 
 def _numero(valor: Any) -> float | None:
+    """Convierte un valor numérico finito a float."""
     if valor is None or str(valor).strip() == "":
         return None
+
     try:
-        n = Decimal(str(valor))
+        numero = Decimal(str(valor))
     except (InvalidOperation, ValueError, TypeError):
         return None
-    return float(n) if n.is_finite() else None
+
+    return float(numero) if numero.is_finite() else None
+
+
+def _desviacion_muestral(valores: list[float]) -> float | None:
+    """Calcula la desviación estándar muestral si hay dos o más datos."""
+    return stdev(valores) if len(valores) >= 2 else None
+
+
+def _evaluar_filas(
+    filas: list[dict],
+    desviacion_evaluacion: float | None,
+) -> dict:
+    """Calcula los indicadores y clasifica los participantes."""
+
+    sigma = _numero(desviacion_evaluacion)
+
+    if desviacion_evaluacion is not None and (
+        sigma is None or sigma <= 0
+    ):
+        raise ValueError(
+            "La desviación estándar de evaluación debe ser positiva."
+        )
+
+    # Opción 2: todos los resultados individuales disponibles.
+    resultados_individuales = []
+
+    for fila in filas:
+        for campo in ("resultado_1", "resultado_2"):
+            valor = fila.get(campo)
+            if valor is not None:
+                resultados_individuales.append(valor)
+
+    desviacion_individuales = _desviacion_muestral(
+        resultados_individuales
+    )
+
+    # Opción 1: promedios de participantes con duplicados completos.
+    promedios = [
+        fila["promedio"]
+        for fila in filas
+        if fila["promedio"] is not None
+    ]
+
+    desviacion_promedios = _desviacion_muestral(promedios)
+
+    # El valor asignado conserva la metodología aprobada.
+    asignado = median(promedios) if promedios else None
+
+    for fila in filas:
+        promedio = fila["promedio"]
+
+        z = (
+            (promedio - asignado) / sigma
+            if promedio is not None
+            and asignado is not None
+            and sigma is not None
+            else None
+        )
+
+        fila["z_score"] = z
+
+        fila["clasificacion"] = (
+            "Sin evaluar" if z is None
+            else "Satisfactorio" if abs(z) <= 2
+            else "Cuestionable" if abs(z) < 3
+            else "No satisfactorio"
+        )
+
+    return {
+        "resultados": filas,
+        "participantes_con_resultados": len(filas),
+        "participantes_con_duplicados_completos": len(promedios),
+        "numero_resultados_individuales": len(resultados_individuales),
+        "valor_asignado_mediana": asignado,
+
+        # Indicador principal, manteniendo la clave utilizada
+        # actualmente por el dashboard y el informe PDF.
+        "desviacion_observada_muestral": desviacion_individuales,
+
+        # Claves explícitas para los nuevos indicadores.
+        "desviacion_resultados_individuales": desviacion_individuales,
+        "desviacion_promedios_participantes": desviacion_promedios,
+
+        # Criterio independiente para la puntuación z.
+        "desviacion_evaluacion": sigma,
+    }
 
 
 def evaluar_parametro(
@@ -30,6 +130,7 @@ def evaluar_parametro(
     desviacion_evaluacion: float | None = None,
 ) -> dict:
     """Evalúa exclusivamente resultados enviados definitivamente."""
+
     identidad(gestor=True)
 
     cid = int(campana_id)
@@ -104,14 +205,16 @@ def evaluar_parametro(
             .execute()
         ).data or []
 
-        for r in resultados:
-            usuario = entregas_por_id.get(int(r["entrega_id"]))
+        for resultado in resultados:
+            usuario = entregas_por_id.get(
+                int(resultado["entrega_id"])
+            )
 
             if usuario is None:
                 continue
 
-            a = _numero(r.get("resultado_1"))
-            b = _numero(r.get("resultado_2"))
+            a = _numero(resultado.get("resultado_1"))
+            b = _numero(resultado.get("resultado_2"))
 
             promedio = (
                 (a + b) / 2
@@ -126,44 +229,12 @@ def evaluar_parametro(
                 "promedio": promedio,
             })
 
-    filas.sort(key=lambda x: x["id_usuario"])
+    filas.sort(key=lambda fila: fila["id_usuario"])
 
-    valores = [
-        f["promedio"]
-        for f in filas
-        if f["promedio"] is not None
-    ]
-
-    asignado = median(valores) if valores else None
-    dispersion = stdev(valores) if len(valores) >= 2 else None
-
-    sigma = _numero(desviacion_evaluacion)
-
-    if desviacion_evaluacion is not None and (
-        sigma is None or sigma <= 0
-    ):
-        raise ValueError(
-            "La desviación estándar de evaluación debe ser positiva."
-        )
-
-    for fila in filas:
-        promedio = fila["promedio"]
-
-        z = (
-            (promedio - asignado) / sigma
-            if promedio is not None
-            and asignado is not None
-            and sigma is not None
-            else None
-        )
-
-        fila["z_score"] = z
-        fila["clasificacion"] = (
-            "Sin evaluar" if z is None
-            else "Satisfactorio" if abs(z) <= 2
-            else "Cuestionable" if abs(z) < 3
-            else "No satisfactorio"
-        )
+    indicadores = _evaluar_filas(
+        filas,
+        desviacion_evaluacion,
+    )
 
     return {
         "campana_id": cid,
@@ -171,12 +242,7 @@ def evaluar_parametro(
         "parametro": parametros[0]["nombre"],
         "unidad": parametros[0].get("unidad", ""),
         "decimales": parametros[0].get("decimales", 2),
-        "participantes_con_resultados": len(filas),
-        "participantes_con_duplicados_completos": len(valores),
-        "valor_asignado_mediana": asignado,
-        "desviacion_observada_muestral": dispersion,
-        "desviacion_evaluacion": sigma,
-        "resultados": filas,
+        **indicadores,
     }
 
 
@@ -184,6 +250,7 @@ def evaluar_simulacion_color(
     desviacion_evaluacion: float | None = None,
 ) -> dict:
     """Simulación en memoria. No escribe datos en Supabase."""
+
     identidad(gestor=True)
 
     datos = [
@@ -193,15 +260,6 @@ def evaluar_simulacion_color(
         ("SIM-004", 147, 149),
         ("SIM-005", 165, 167),
     ]
-
-    sigma = _numero(desviacion_evaluacion)
-
-    if desviacion_evaluacion is not None and (
-        sigma is None or sigma <= 0
-    ):
-        raise ValueError(
-            "La desviación de evaluación debe ser positiva."
-        )
 
     filas = [
         {
@@ -213,23 +271,10 @@ def evaluar_simulacion_color(
         for usuario, a, b in datos
     ]
 
-    valores = [fila["promedio"] for fila in filas]
-    asignado = median(valores)
-
-    for fila in filas:
-        z = (
-            (fila["promedio"] - asignado) / sigma
-            if sigma is not None
-            else None
-        )
-
-        fila["z_score"] = z
-        fila["clasificacion"] = (
-            "Sin evaluar" if z is None
-            else "Satisfactorio" if abs(z) <= 2
-            else "Cuestionable" if abs(z) < 3
-            else "No satisfactorio"
-        )
+    indicadores = _evaluar_filas(
+        filas,
+        desviacion_evaluacion,
+    )
 
     return {
         "campana_id": None,
@@ -237,10 +282,5 @@ def evaluar_simulacion_color(
         "parametro": "Color",
         "unidad": "UI",
         "decimales": 2,
-        "participantes_con_resultados": len(filas),
-        "participantes_con_duplicados_completos": len(valores),
-        "valor_asignado_mediana": asignado,
-        "desviacion_observada_muestral": stdev(valores),
-        "desviacion_evaluacion": sigma,
-        "resultados": filas,
+        **indicadores,
     }

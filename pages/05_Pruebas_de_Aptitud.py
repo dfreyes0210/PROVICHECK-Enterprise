@@ -48,7 +48,7 @@ a,b,c = st.columns(3)
 a.metric('Participante',usuario)
 b.metric('Laboratorio','Fábrica')
 c.metric('Fecha',datetime.now(ZONA).strftime('%d/%m/%Y'))
-st.info('Etapa 5B: evaluación estadística y simulación de cinco participantes (sin modificar Supabase).')
+st.info('Módulo de comparación interanalistas. Las evaluaciones definitivas requieren criterios estadísticos aprobados y pruebas integrales previas a producción.')
 
 t1,t2,t3,t4 = st.tabs(['📅 Campañas','🧪 Registrar resultados','📊 Evaluación y dashboard','📄 Informes'])
 with t1:
@@ -338,7 +338,13 @@ with t3:
                             a.metric('Entregas con resultado', reporte['participantes_con_resultados'])
                             b.metric('Duplicados completos', reporte['participantes_con_duplicados_completos'])
                             c.metric('Valor asignado · mediana', fmt_num(reporte['valor_asignado_mediana']))
-                            d.metric('Desv. observada (muestral)', fmt_num(reporte['desviacion_observada_muestral']))
+                            d.metric('Resultados individuales válidos', reporte.get('numero_resultados_individuales', '—'))
+                            st.markdown('#### Dispersión de los resultados')
+                            disp1, disp2, disp3 = st.columns(3)
+                            disp1.metric('Desv. observada principal · resultados individuales', fmt_num(reporte.get('desviacion_resultados_individuales', reporte.get('desviacion_observada_muestral'))))
+                            disp2.metric('Desv. secundaria · promedios por analista', fmt_num(reporte.get('desviacion_promedios_participantes')))
+                            disp3.metric('σpt · desviación para evaluación', fmt_num(reporte.get('desviacion_evaluacion')))
+                            st.caption('Las dos desviaciones observadas son muestrales y descriptivas. La principal incluye todos los resultados individuales válidos, incluso si falta su duplicado; la secundaria incluye solo promedios de duplicados completos. El z-score se calcula con el promedio del participante y una σpt independiente, que debe justificarse documentalmente.')
                             if len(validos) < 3:
                                 st.warning('Evaluación preliminar: hay menos de tres participantes con duplicados completos. No es suficiente para caracterizar de manera robusta el grupo; no se debe emitir una conclusión definitiva.')
                             if reporte['desviacion_evaluacion'] is None:
@@ -450,5 +456,5 @@ with t4:
                                    file_name='PROVICHECK_Pruebas_Aptitud_SIMULACION.pdf' if es_simulacion else 'PROVICHECK_Pruebas_Aptitud_PRELIMINAR.pdf',
                                    mime='application/pdf', key='pa5_descargar_pdf')
 st.divider()
-st.caption('PROVICHECK · Pruebas de Aptitud · Fase 5C')
+st.caption('PROVICHECK · Pruebas de Aptitud · Comparaciones interanalistas')
 pie_pagina()
