@@ -287,6 +287,21 @@ def construir_relaciones_equipo_patron(tabla_relaciones):
     return relaciones
 
 
+def construir_relaciones_inactivas(tabla_relaciones):
+    """Identifica relaciones explícitamente retiradas, sin alterar históricos."""
+    inactivas = set()
+    if tabla_relaciones.empty or not {"codigo_equipo", "codigo_patron", "estado"}.issubset(tabla_relaciones.columns):
+        return inactivas
+
+    for _, fila in tabla_relaciones.iterrows():
+        equipo = normalizar_codigo(fila.get("codigo_equipo"))
+        patron = normalizar_codigo(fila.get("codigo_patron"))
+        estado = texto_seguro(fila.get("estado"), "Activo").strip().casefold()
+        if equipo and patron and estado in {"inactivo", "anulado", "retirado", "fuera de servicio"}:
+            inactivas.add((equipo, patron))
+    return inactivas
+
+
 def evaluar_patron(
     codigo_equipo_actual,
     codigo_patron,
@@ -725,6 +740,7 @@ indice_patrones = construir_indice_patrones(patrones)
 relaciones_activas = construir_relaciones_equipo_patron(
     relaciones_equipo_patron
 )
+relaciones_inactivas = construir_relaciones_inactivas(relaciones_equipo_patron)
 
 alias_columnas = {
     "limite_inferior_g": "limite_inferior",
@@ -931,6 +947,31 @@ puntos_equipo = puntos[
     .apply(normalizar_codigo)
     .eq(codigo_equipo)
 ].copy()
+
+# Solo los puntos vigentes se ofrecen para nuevas verificaciones.
+# No se modifican los registros guardados ni las tendencias históricas.
+if "estado" in puntos_equipo.columns:
+    puntos_equipo = puntos_equipo[
+        puntos_equipo["estado"].apply(
+            lambda valor: texto_seguro(valor, "Activo").strip().casefold() == "activo"
+        )
+    ].copy()
+
+# Una relación explícitamente inactiva retira el punto de captura.
+# Si no existe relación en la tabla, se conserva la advertencia histórica
+# de evaluar_patron para no ocultar puntos previamente configurados.
+if "codigo_patron" in puntos_equipo.columns:
+    puntos_equipo = puntos_equipo[
+        puntos_equipo.apply(
+            lambda fila: (
+                (codigo_equipo, normalizar_codigo(fila.get("codigo_patron")))
+                not in relaciones_inactivas
+                or (codigo_equipo, normalizar_codigo(fila.get("codigo_patron")))
+                in relaciones_activas
+            ),
+            axis=1,
+        )
+    ].copy()
 
 st.markdown("### 3. Identificación del equipo")
 
