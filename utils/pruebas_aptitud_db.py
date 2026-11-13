@@ -1,6 +1,6 @@
 """PROVICHECK | Campañas de Pruebas de Aptitud. Uso exclusivo en servidor."""
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import unicodedata
 import streamlit as st
@@ -278,3 +278,61 @@ def enviar_mis_resultados_definitivos(campana_id, material_id, observacion='', c
         raise RuntimeError('Supabase no confirmó el envío definitivo.')
 
     return int(respuesta.data)
+
+
+# ============================================================
+# CONFIGURACIÓN DE SIGMA PT POR ENSAYO
+# ============================================================
+
+def consultar_sigma_pt(parametro_id):
+    """Consulta la configuración estadística de un ensayo para un gestor."""
+    identidad(gestor=True)
+    try:
+        pid = int(parametro_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Identificador de ensayo inválido.') from exc
+    if pid <= 0:
+        raise ValueError('Identificador de ensayo inválido.')
+
+    respuesta = (obtener_cliente_supabase().table('pa_parametros')
+                 .select('id,material_id,nombre,unidad,sigma_pt,'
+                         'sigma_pt_justificacion,sigma_pt_actualizado_en,'
+                         'sigma_pt_actualizado_por')
+                 .eq('id', pid).limit(1).execute())
+    if not respuesta.data:
+        raise ValueError('No se encontró el ensayo.')
+    return respuesta.data[0]
+
+
+def configurar_sigma_pt(campana_id, material_id, parametro_id, sigma_pt, justificacion):
+    """Guarda sigma_pt y auditoría de manera atómica mediante RPC en Supabase."""
+    actor = identidad(gestor=True)
+    try:
+        cid, mid, pid = int(campana_id), int(material_id), int(parametro_id)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('Identificadores inválidos.') from exc
+    if min(cid, mid, pid) <= 0:
+        raise ValueError('Identificadores inválidos.')
+
+    try:
+        sigma = Decimal(str(sigma_pt).strip())
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError('La σpt debe ser numérica.') from exc
+    if not sigma.is_finite() or sigma <= 0:
+        raise ValueError('La σpt debe ser un número finito mayor que cero.')
+
+    motivo = str(justificacion or '').strip()
+    if not 10 <= len(motivo) <= 2000:
+        raise ValueError('La justificación debe tener entre 10 y 2000 caracteres.')
+
+    respuesta = obtener_cliente_supabase().rpc('pa_configurar_sigma_pt', {
+        'p_campana_id': cid,
+        'p_material_id': mid,
+        'p_parametro_id': pid,
+        'p_sigma_pt': float(sigma),
+        'p_justificacion': motivo,
+        'p_actor': actor,
+    }).execute()
+    if not isinstance(respuesta.data, dict) or respuesta.data.get('id') != pid:
+        raise RuntimeError('Supabase no confirmó la configuración de σpt.')
+    return respuesta.data

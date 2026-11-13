@@ -29,6 +29,8 @@ from utils.pruebas_aptitud_db import (
     consultar_mi_borrador,
     guardar_mi_borrador,
     enviar_mis_resultados_definitivos,
+    consultar_sigma_pt,
+    configurar_sigma_pt,
 )
 from utils.ui import (
     aplicar_estilo,
@@ -916,6 +918,107 @@ with tab_resultados:
 with tab_evaluacion:
     st.subheader("Evaluación estadística interanalistas")
 
+    # Configuración persistente de σpt, solo para gestores autorizados.
+    # Se mantiene independiente del motor de evaluación y de la simulación.
+    if gestor:
+        with st.expander("⚙️ Configurar σpt por material y ensayo", expanded=False):
+            st.caption(
+                "La desviación estándar de evaluación se guarda en Supabase "
+                "junto con su justificación y registro de auditoría. "
+                "No modifica los resultados enviados."
+            )
+            try:
+                campanas_sigma = listar_campanas()
+                if not campanas_sigma:
+                    st.info("No hay campañas disponibles.")
+                else:
+                    campana_sigma = st.selectbox(
+                        "Campaña para configurar σpt",
+                        options=campanas_sigma,
+                        format_func=lambda c: (
+                            f"{c['codigo']} · {c['titulo']} ({c['estado']})"
+                        ),
+                        key="pa_sigma_campana",
+                    )
+                    materiales_sigma = listar_materiales(campana_sigma["id"])
+                    if not materiales_sigma:
+                        st.info("La campaña no tiene materiales.")
+                    else:
+                        material_sigma = st.selectbox(
+                            "Material para configurar σpt",
+                            options=materiales_sigma,
+                            format_func=lambda m: m["nombre"],
+                            key="pa_sigma_material",
+                        )
+                        parametros_sigma = listar_parametros_registro(material_sigma["id"])
+                        if not parametros_sigma:
+                            st.info("El material no tiene ensayos activos.")
+                        else:
+                            parametro_sigma = st.selectbox(
+                                "Ensayo para configurar σpt",
+                                options=parametros_sigma,
+                                format_func=lambda p: (
+                                    f"{p['nombre']} ({p.get('unidad') or 'sin unidad'})"
+                                ),
+                                key="pa_sigma_parametro",
+                            )
+                            configuracion_sigma = consultar_sigma_pt(parametro_sigma["id"])
+                            sigma_previa = configuracion_sigma.get("sigma_pt")
+                            justificacion_previa = (
+                                configuracion_sigma.get("sigma_pt_justificacion") or ""
+                            )
+                            st.write(
+                                "**σpt registrada:** "
+                                + (str(sigma_previa) if sigma_previa is not None else "Pendiente")
+                            )
+                            if justificacion_previa:
+                                st.caption(f"Justificación vigente: {justificacion_previa}")
+                            if configuracion_sigma.get("sigma_pt_actualizado_por"):
+                                st.caption(
+                                    "Última configuración por: "
+                                    f"{configuracion_sigma['sigma_pt_actualizado_por']}"
+                                )
+                            # Las claves por ensayo evitan reutilizar valores entre selecciones.
+                            with st.form(
+                                f"pa_sigma_form_{campana_sigma['id']}_"
+                                f"{material_sigma['id']}_{parametro_sigma['id']}"
+                            ):
+                                sigma_texto = st.text_input(
+                                    "σpt (valor positivo, en la unidad del ensayo)",
+                                    value=str(sigma_previa) if sigma_previa is not None else "",
+                                    help="Usa punto decimal. Ejemplo: 0.25",
+                                )
+                                motivo_sigma = st.text_area(
+                                    "Justificación técnica / origen de σpt",
+                                    value=justificacion_previa,
+                                    max_chars=2000,
+                                    help="Mínimo 10 caracteres. Documenta el criterio aplicado.",
+                                )
+                                confirmar_sigma = st.checkbox(
+                                    "Confirmo que revisé el valor y su justificación"
+                                )
+                                guardar_sigma = st.form_submit_button(
+                                    "💾 Guardar configuración σpt", type="primary"
+                                )
+                            if guardar_sigma:
+                                try:
+                                    if not confirmar_sigma:
+                                        raise ValueError("Debes confirmar la configuración.")
+                                    configurar_sigma_pt(
+                                        campana_sigma["id"],
+                                        material_sigma["id"],
+                                        parametro_sigma["id"],
+                                        sigma_texto,
+                                        motivo_sigma,
+                                    )
+                                    st.success("σpt guardada y auditada correctamente.")
+                                    st.rerun()
+                                except Exception as exc:
+                                    st.error(f"No se pudo guardar σpt: {exc}")
+            except Exception as exc:
+                st.error(f"No se pudo cargar la configuración de σpt: {exc}")
+
+
     modo_simulado = st.toggle(
         "🧪 Activar simulación de 5 participantes "
         "(sin guardar en Supabase)",
@@ -1633,6 +1736,51 @@ with tab_evaluacion:
 # ============================================================
 
 with tab_informes:
+    if gestor:
+        st.markdown("### Informe global de campaña")
+        st.caption("Incluye todos los materiales y ensayos. Versión preliminar para revisión técnica.")
+        try:
+            campanas_global = listar_campanas()
+            if campanas_global:
+                opciones_global = {f"{c['codigo']} · {c['titulo']}": c for c in campanas_global}
+                etiqueta_global = st.selectbox("Campaña para informe global", list(opciones_global), key="pa_global_campana")
+                metodo_global = st.radio("Metodología de σpt para toda la campaña", [
+                    "cenicana", "individuales", "promedios"],
+                    format_func=lambda m: {
+                        "cenicana": "Referencia interlaboratorio Cenicaña 2026",
+                        "individuales": "Desviación de resultados individuales",
+                        "promedios": "Desviación de promedios por analista",
+                    }[m], key="pa_global_metodo")
+                if st.button("Preparar informe global preliminar", key="pa_global_generar"):
+                    try:
+                        from utils.pruebas_aptitud_global_datos import preparar_informe_global
+                        from utils.pruebas_aptitud_informe_global import generar_informe_global_pdf
+                        datos, mats, nombres, confidencial, avisos = preparar_informe_global(opciones_global[etiqueta_global], metodo_global)
+                        pdf = generar_informe_global_pdf(datos, mats, nombres)
+                        st.session_state['pa_global_generado'] = {
+                            'pdf':pdf, 'campana':datos['codigo'], 'metodo':metodo_global,
+                            'confidencial':confidencial, 'avisos':avisos,
+                        }
+                        st.success("Informe preliminar preparado.")
+                    except Exception as exc:
+                        st.session_state.pop('pa_global_generado', None)
+                        st.error(f"No se pudo generar el informe global: {exc}")
+                preparado = st.session_state.get('pa_global_generado')
+                if preparado and preparado['campana'] == opciones_global[etiqueta_global]['codigo'] and preparado['metodo'] == metodo_global:
+                    for aviso in preparado['avisos']:
+                        st.warning(aviso)
+                    st.warning("Documento preliminar. La σpt y las clasificaciones requieren validación técnica antes de emisión oficial.")
+                    st.download_button("Descargar informe global PDF", preparado['pdf'],
+                        file_name=f"PROVICHECK_Global_{preparado['campana']}_PRELIMINAR.pdf",
+                        mime="application/pdf", key="pa_global_descargar")
+                    if rol == "lider" and norm(laboratorio) in {"fabrica", "laboratorio de fabrica", "laboratorio fabrica"}:
+                        with st.expander("Relación confidencial de participantes (solo líder de Fábrica)"):
+                            st.dataframe(pd.DataFrame(preparado['confidencial']), hide_index=True)
+            else:
+                st.info("No hay campañas registradas.")
+        except Exception as exc:
+            st.error(f"No se pudo cargar la sección global: {exc}")
+    st.divider()
     st.subheader(
         "Informe estadístico de pruebas de aptitud"
     )
